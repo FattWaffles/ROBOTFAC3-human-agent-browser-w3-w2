@@ -33,9 +33,18 @@ Optional: get a free RPC URL from helius.dev and paste it under **RPC** (the pub
 - `src/main.js`: browser UI
 - `vite.config.js`: `/rpc` proxy (the public RPC blocks browsers; the Rust core does this in the desktop build)
 
-## Next build (paused, waiting on guideline docs)
-Waiting for the Solana guideline docs to be added to the project folder. They'll be followed before any of this starts.
-1. **Tauri v2 shell**: wrap this UI, strict IPC capabilities (only the local UI can call the Rust core), and move the RPC relay into Rust.
-2. **CamoFox sidecar**: agent browsing through its REST API (port 9377) + docker-compose.
-3. **Devnet toggle**: demo with free test SOL.
-4. **On-chain agent allowance (Anchor)**: PDA vault, spend limit, revoke. Follows the Solana quick start (accounts, transactions, PDAs, CPIs).
+## Next build
+Follows [`../mdfiles/guideline-docs/robotfac3-build-guidelines.md`](../mdfiles/guideline-docs/robotfac3-build-guidelines.md), distilled from the Colosseum World's Fair resource links. Deadline **Oct 12, 2026**.
+1. Free RPC key (Helius/QuickNode) behind the proxy
+2. Migrate to `@solana/kit`
+3. Devnet toggle
+4. Solana Actions / Blinks in the address bar
+5. Phantom Connect fallback (needs a Phantom Portal App ID)
+6. Agent allowance via the official Subscriptions program + revoke
+7. x402 payments with an approval sheet
+8. Tauri shell + IPC lockdown
+9. CamoFox sidecar (disclosed third-party, MPL-2.0)
+10. Metaplex agent identity
+
+## Hackathon disclosures
+All code here was written during the contest period (from Sept 18, 2026; see git history), with AI assistance (Claude Code). Third-party: `@solana/web3.js`, `@bonfida/spl-name-service`, Vite, Tailwind; planned: CamoFox/Camoufox (MPL-2.0).
