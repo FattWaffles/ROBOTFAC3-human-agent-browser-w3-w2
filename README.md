@@ -32,3 +32,10 @@ Optional: get a free RPC URL from helius.dev and paste it under **RPC** (the pub
 - `src/solana.js`: SNS resolution, transaction build, simulation, Phantom
 - `src/main.js`: browser UI
 - `vite.config.js`: `/rpc` proxy (the public RPC blocks browsers; the Rust core does this in the desktop build)
+
+## Next build (paused, waiting on guideline docs)
+Waiting for the Solana guideline docs to be added to the project folder. They'll be followed before any of this starts.
+1. **Tauri v2 shell**: wrap this UI, strict IPC capabilities (only the local UI can call the Rust core), and move the RPC relay into Rust.
+2. **CamoFox sidecar**: agent browsing through its REST API (port 9377) + docker-compose.
+3. **Devnet toggle**: demo with free test SOL.
+4. **On-chain agent allowance (Anchor)**: PDA vault, spend limit, revoke. Follows the Solana quick start (accounts, transactions, PDAs, CPIs).
