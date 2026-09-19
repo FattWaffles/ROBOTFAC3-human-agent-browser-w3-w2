@@ -67,6 +67,8 @@ Judged harmless and left as notes: the spend limit lives in `localStorage` share
 - Subdomains are refused for now.
 
 ## Security notes
+Full feature list, Island comparison and roadmap: [SECURITY-FEATURES.md](SECURITY-FEATURES.md).
+
 - **Keys:** RobotFac3 never holds, sees or can recover the wallet key. It hands Phantom an unsigned message.
 - **CSP:** `default-src 'none'`; scripts, styles, images and connections only from `'self'`; frames `https:` only. No inline script or style.
 - **Framed pages** get `sandbox` without `allow-same-origin`, so they run in an opaque origin.
