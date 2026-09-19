@@ -3,52 +3,51 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" href="/icon.png" />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="icon" href="public/icon.png" />
     <title>RobotFac3</title>
-    <link rel="stylesheet" href="/src/style.css" />
+    <link rel="stylesheet" href="styles.css" />
   </head>
-  <body class="h-screen overflow-hidden">
-    <div class="flex h-full flex-col">
-      <!-- Browser chrome -->
-      <header class="border-b border-ink-3 bg-ink-2">
-        <div class="flex items-center gap-3 px-3 pt-2">
-          <img src="/logo.png" alt="RobotFac3" class="h-9" />
-          <div id="modeSwitch" class="ml-2 flex rounded-md border border-ink-3 p-0.5 text-sm">
-            <button data-mode="human" class="mode-btn rounded px-3 py-1">You</button>
-            <button data-mode="agent" class="mode-btn rounded px-3 py-1">Agent</button>
+  <body>
+    <div class="app">
+      <header class="chrome">
+        <div class="chrome-top">
+          <img src="public/logo.png" alt="RobotFac3" class="logo" />
+          <div class="mode-switch">
+            <button data-mode="human" class="mode-btn">You</button>
+            <button data-mode="agent" class="mode-btn">Agent</button>
           </div>
-          <div class="ml-auto flex items-center gap-2">
-            <button id="settingsBtn" class="btn-ghost" title="Settings">RPC</button>
-            <button id="walletBtn" class="btn-red">Connect Phantom</button>
+          <div class="chrome-actions">
+            <span id="upstream" class="chip chip-muted" title="Where the relay sends Solana requests">rpc: …</span>
+            <button id="settingsBtn" class="btn btn-ghost">Settings</button>
+            <button id="walletBtn" class="btn btn-red">Connect Phantom</button>
           </div>
         </div>
-        <form id="addressForm" class="flex items-center gap-2 px-3 py-2">
-          <button type="button" id="homeBtn" class="btn-ghost px-2" title="Home">⌂</button>
-          <div class="flex flex-1 items-center gap-2 rounded-md border border-ink-3 bg-ink px-3 py-1.5 focus-within:border-blood">
-            <span id="protoBadge" class="chip bg-ink-3 text-ash">—</span>
-            <input id="address" autocomplete="off" spellcheck="false"
-              class="flex-1 bg-transparent font-mono text-sm outline-none placeholder:text-ash"
-              placeholder="toly.sol · https://solana.com · or paste anything" />
-            <span id="shield" class="chip bg-ok/15 text-ok">shield on</span>
+        <form id="addressForm" class="address-row">
+          <button type="button" id="homeBtn" class="btn btn-ghost btn-icon" title="Home">⌂</button>
+          <div class="address-box">
+            <span id="protoBadge" class="chip chip-muted">—</span>
+            <input id="address" autocomplete="off" autocapitalize="off" spellcheck="false"
+              placeholder="toly.sns · solana.com · or paste anything" />
+            <span class="chip chip-ok">shield on</span>
           </div>
-          <button class="btn-red">Go</button>
+          <button class="btn btn-red">Go</button>
         </form>
       </header>
 
-      <div class="flex min-h-0 flex-1">
-        <main id="view" class="min-w-0 flex-1 overflow-y-auto p-6"></main>
-        <!-- Security core log -->
-        <aside class="flex w-60 shrink-0 flex-col xl:w-80 border-l border-ink-3 bg-ink-2">
-          <div class="flex items-center justify-between border-b border-ink-3 px-4 py-3">
-            <h2 class="text-sm font-bold uppercase tracking-widest">Security core</h2>
-            <span class="chip bg-blood/20 text-blood">live</span>
+      <div class="body">
+        <main id="view" class="view"></main>
+        <aside class="sidebar">
+          <div class="sidebar-head">
+            <h2>Security core</h2>
+            <span class="chip chip-red">live</span>
           </div>
-          <div id="log" class="flex-1 space-y-2 overflow-y-auto p-3 text-xs"></div>
+          <div id="log" class="log"></div>
         </aside>
       </div>
     </div>
 
-    <div id="modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/70 p-4"></div>
-    <script type="module" src="/src/main.js"></script>
+    <div id="modal" class="modal" hidden></div>
+    <script type="module" src="src/main.js"></script>
   </body>
 </html>
