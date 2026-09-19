@@ -15,8 +15,9 @@ export async function sha256(bytes) {
 }
 
 export async function findProgramAddress(seeds, programId) {
+  if (!(programId instanceof Uint8Array) || programId.length !== 32) throw new Error("Program id must be 32 bytes");
   if (seeds.length > 15) throw new Error("Too many seeds");
-  for (const s of seeds) if (s.length > 32) throw new Error("Seed longer than 32 bytes");
+  for (const s of seeds) if (!(s instanceof Uint8Array) || s.length > 32) throw new Error("Seeds must be byte arrays of at most 32 bytes");
   for (let bump = 255; bump >= 0; bump--) {
     const hash = await sha256(concat(...seeds, Uint8Array.of(bump), programId, MARKER));
     if (!isOnCurve(hash)) return { address: hash, bump };

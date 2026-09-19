@@ -8,6 +8,8 @@ What it does:
   * keeps the RPC API key out of the page: it is read from .env.local and never sent to the browser
 
 What it refuses:
+  * connection reuse: every response closes the connection (HTTP/1.0, Connection: close), so bytes left over from
+    a rejected request can never be parsed as a second, forged request (request smuggling)
   * any request whose Host is not localhost/127.0.0.1 (DNS-rebinding defence)
   * any POST that does not come from this page's own origin (other sites cannot use the relay)
   * any RPC method not on the allow-list below (there is no sendTransaction: Phantom sends, not RobotFac3)
@@ -97,7 +99,8 @@ def resolve_static(url_path):
 class Handler(BaseHTTPRequestHandler):
     server_version = "rf3-relay"
     sys_version = ""
-    protocol_version = "HTTP/1.1"
+    # HTTP/1.0 on purpose: http.server only honours keep-alive for 1.1, and this relay must never reuse a connection.
+    protocol_version = "HTTP/1.0"
 
     def log_message(self, fmt, *args):
         pass  # request bodies and URLs are never logged
@@ -105,7 +108,9 @@ class Handler(BaseHTTPRequestHandler):
     def reply(self, status, body, content_type="application/json"):
         if isinstance(body, (dict, list)):
             body = json.dumps(body).encode()
+        self.close_connection = True
         self.send_response(status)
+        self.send_header("Connection", "close")
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         for name, value in SECURITY_HEADERS.items():
@@ -113,6 +118,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
+
+    def send_error(self, code, message=None, explain=None):
+        # http.server's own error pages (bad request line, oversized headers) get the same headers and close too.
+        # The message is fixed: the default one echoes part of the request back.
+        try:
+            self.reply(code, {"error": "bad request"})
+        except OSError:
+            pass
 
     def host_ok(self):
         return self.headers.get("Host", "") in ALLOWED_HOSTS
@@ -138,6 +151,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(403, {"error": "cross-site requests are refused"})
         if self.path != "/rpc":
             return self.reply(404, {"error": "not found"})
+        if self.headers.get("Transfer-Encoding") is not None or len(self.headers.get_all("Content-Length") or []) != 1:
+            return self.reply(400, {"error": "exactly one Content-Length and no Transfer-Encoding"})
         if self.headers.get("Content-Type", "").split(";")[0].strip().lower() != "application/json":
             return self.reply(415, {"error": "Content-Type must be application/json"})
         try:
@@ -149,9 +164,9 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length)
         try:
             call = json.loads(raw)
-        except ValueError:
+        except (ValueError, RecursionError):
             return self.reply(400, {"error": "invalid JSON"})
-        if not isinstance(call, dict) or call.get("method") not in RPC_METHODS:
+        if not isinstance(call, dict) or not isinstance(call.get("method"), str) or call["method"] not in RPC_METHODS:
             return self.reply(403, {"jsonrpc": "2.0", "id": None, "error": {"code": -32601, "message": "method not allowed by the relay"}})
 
         # Re-serialize so only a well-formed single call goes upstream; no browser headers are forwarded.

@@ -3,21 +3,23 @@ import { rpc } from "./solana/rpc.js";
 import { resolveName, SnsError } from "./solana/sns.js";
 import { buildTransferMessage, unsignedWire, toBase64, solToLamports, lamportsToSol } from "./solana/tx.js";
 import * as phantom from "./solana/phantom.js";
-import { scanForSecrets, setWordlist, detectInjection, evaluateAgentPayment, getCap } from "./security.js";
+import { scanForSecrets, setWordlist, isDegraded, detectInjection, parsePaymentRequest, evaluateAgentPayment, getCap } from "./security.js";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const short = (a) => (a ? `${a.slice(0, 4)}…${a.slice(-4)}` : "");
 
-// Public address used only to preview a simulation when no wallet is connected. Nothing can be signed with it.
-const DEMO_PAYER = "86xCnPeV69n6t3DnyGvkKobf9FdN2H9oiVDdaMpo2MMY";
+// Public addresses used only to preview a simulation when no wallet is connected. Nothing can be signed with them.
+// Two, so the preview is never a transfer from an address to itself.
+const DEMO_PAYERS = ["86xCnPeV69n6t3DnyGvkKobf9FdN2H9oiVDdaMpo2MMY", "7XGrbd3dmdesSR5vAu7siidiZ1YHyizzuPCQAnh2g2Lo"];
 const SIMULATION_MAX_AGE_MS = 45_000;
 
-const state = { mode: "human", wallet: null, page: null };
+const state = { mode: "human", wallet: null, page: null, signing: false };
+let reviewSeq = 0; // bumped whenever a review is superseded or dismissed, so a late one can never reappear
 
 // ---------- Security core log ----------
-function log(level, title, detail = "") {
-  const who = state.mode === "agent" ? "AGENT" : "YOU";
+function log(level, title, detail = "", actor) {
+  const who = actor || (state.mode === "agent" ? "AGENT" : "YOU");
   const row = document.createElement("div");
   row.className = `log-row log-${level}`;
   row.innerHTML = `<header><b>${esc(title)}</b><time>${who} · ${new Date().toLocaleTimeString()}</time></header>${detail ? `<p>${esc(detail)}</p>` : ""}`;
@@ -29,8 +31,11 @@ function openModal(html) {
   $("modal").innerHTML = `<div class="card sheet">${html}</div>`;
   $("modal").hidden = false;
 }
-function closeModal() { $("modal").hidden = true; $("modal").innerHTML = ""; }
-$("modal").addEventListener("click", (e) => { if (e.target.id === "modal" || e.target.dataset.close != null) closeModal(); });
+function closeModal() { reviewSeq++; $("modal").hidden = true; $("modal").innerHTML = ""; }
+$("modal").addEventListener("click", (e) => {
+  if (state.signing) return; // while Phantom is open the only way out is Phantom's own cancel
+  if (e.target.id === "modal" || e.target.dataset.close != null) closeModal();
+});
 
 // ---------- Leak check on RobotFac3's own inputs ----------
 function leakBlocked(hit, where) {
@@ -42,7 +47,9 @@ function leakBlocked(hit, where) {
 }
 
 // Returns true when the text is clean. Blocks and explains otherwise.
+let ready = Promise.resolve();
 async function passesLeakCheck(text, where) {
+  await ready;
   const hit = await scanForSecrets(text);
   if (hit) leakBlocked(hit, where);
   return !hit;
@@ -53,9 +60,16 @@ function guardPaste(input, where) {
   input.addEventListener("paste", async (e) => {
     e.preventDefault();
     const text = e.clipboardData.getData("text");
-    if (!(await passesLeakCheck(text, `${where} (paste)`))) return;
-    input.setRangeText(text, input.selectionStart, input.selectionEnd, "end");
-    input.dispatchEvent(new Event("input"));
+    input.readOnly = true; // nothing can be typed or submitted into this field while the check runs
+    let clean;
+    try { clean = await passesLeakCheck(text, `${where} (paste)`); } finally { input.readOnly = false; }
+    if (!clean || !input.isConnected) return;
+    input.focus();
+    // insertText goes through the browser's own editing path: newlines become spaces and undo keeps working.
+    if (!document.execCommand("insertText", false, text)) {
+      input.setRangeText(text.replace(/\r\n?|\n/g, " "), input.selectionStart, input.selectionEnd, "end");
+      input.dispatchEvent(new Event("input"));
+    }
   });
 }
 
@@ -96,10 +110,11 @@ $("walletBtn").addEventListener("click", async () => {
 function detect(input) {
   const s = input.trim();
   if (s.startsWith("rf3://")) return { kind: "internal", label: "RF3", cls: "chip-bone" };
-  if (/^\S+\.(sns|sol)$/i.test(s)) return { kind: "sns", label: "SNS", cls: "chip-sns" };
-  if (/\.eth$/i.test(s)) return { kind: "eth", label: "ENS", cls: "chip-sky" };
   if (/^http:\/\//i.test(s)) return { kind: "http", label: "HTTP", cls: "chip-warn" };
-  if (/^https:\/\//i.test(s) || /^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(s)) return { kind: "https", label: "HTTPS", cls: "chip-ok" };
+  if (/^https:\/\//i.test(s)) return { kind: "https", label: "HTTPS", cls: "chip-ok" };
+  if (/^[^\s\/:@?#]+\.(sns|sol)$/i.test(s)) return { kind: "sns", label: "SNS", cls: "chip-sns" };
+  if (/\.eth$/i.test(s)) return { kind: "eth", label: "ENS", cls: "chip-sky" };
+  if (/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(s)) return { kind: "https", label: "HTTPS", cls: "chip-ok" };
   return { kind: "unknown", label: "—", cls: "chip-muted" };
 }
 function paintBadge() {
@@ -113,7 +128,7 @@ guardPaste($("address"), "address bar");
 $("addressForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const v = $("address").value.trim();
-  if (!v) return;
+  if (!v || $("address").readOnly) return;
   if (!(await passesLeakCheck(v, "address bar"))) { $("address").value = ""; paintBadge(); return; }
   navigate(v);
 });
@@ -195,7 +210,7 @@ async function renderName(input, silent) {
   $("view").innerHTML = `
   <section class="page page-narrow">
     ${typedSol ? `<div class="notice notice-warn"><b>You typed ${esc(info.label)}.sol. RobotFac3 looked up ${esc(info.display)}.</b>
-      SNS is moving to the .sns ending, and its SDK stops answering .sol lookups around Oct 2, 2026. After that, .sol names belong to a separate registry and the same name may belong to someone else. Check the address below before you send anything.</div>` : ""}
+      SNS is moving to the .sns ending and stops answering .sol lookups at mainnet slot 452,825,395 (early October 2026). After that, .sol names belong to a separate registry, the same name may belong to someone else, and RobotFac3 will refuse .sol outright. Check the address below before you send anything.</div>` : ""}
     <div class="card name-card">
       <div class="name-head">
         <div>
@@ -210,15 +225,16 @@ async function renderName(input, silent) {
         ${info.target !== info.registryOwner ? `<dt>Name owner</dt><dd>${esc(info.registryOwner)}</dd>` : ""}
       </dl>
       <div class="row row-top">
-        ${info.url ? `<button id="openSite" class="btn btn-ghost">Open website ↗</button>` : `<span class="chip chip-muted">no verified website record</span>`}
+        ${info.url ? `<button id="openSite" class="btn btn-ghost">Open ${esc(new URL(info.url).host)} ↗</button>` : `<span class="chip chip-muted">no verified website record</span>`}
         <a class="btn btn-ghost" href="https://explorer.solana.com/address/${esc(info.target)}" target="_blank" rel="noopener noreferrer">View on explorer ↗</a>
         ${agent ? "" : `<button id="sendBtn" class="btn btn-red">Send SOL</button>`}
       </div>
     </div>
     ${agent ? agentPanel(`Tip 0.001 SOL to ${info.display}`) : ""}
   </section>`;
-  $("openSite")?.addEventListener("click", () => navigate(info.url));
-  $("sendBtn")?.addEventListener("click", () => reviewPayment({ to: info.target, label: info.display, amount: "0.001", source: "you" }));
+  // The record is on-chain text someone else wrote: it goes straight to the sandboxed web view, never back through the router.
+  $("openSite")?.addEventListener("click", () => { state.page = info.url; renderWeb(info.url); });
+  $("sendBtn")?.addEventListener("click", () => reviewPayment({ to: info.target, label: info.display, amount: "0.001", source: "you", typedSol }));
   if (agent) bindAgent();
 }
 
@@ -227,17 +243,33 @@ function renderWeb(url, silent) {
   let parsed;
   try { parsed = new URL(url); } catch { parsed = null; }
   if (!parsed || parsed.protocol !== "https:") return void ($("view").innerHTML = note("That address isn't valid", "Try a full https:// address."));
+  if (parsed.username || parsed.password) {
+    log("warn", "Refused an address with a hidden login part", parsed.host);
+    return void ($("view").innerHTML = note("That address hides where it really goes", `The part before the @ is decoration. The real site is ${parsed.host}. Type that instead if you meant it.`));
+  }
+  state.page = parsed.href;
+  $("address").value = parsed.href; // always show the parsed address, not what was typed
+  paintBadge();
   if (!silent) log("info", "HTTPS page opened", parsed.href);
   $("view").classList.add("flush");
   // No allow-same-origin: the framed page gets an opaque origin and can never reach RobotFac3's own storage or wallet session.
   $("view").innerHTML = `
     <div class="web-frame">
       <div class="web-bar">
-        <span>Web prototype: many sites refuse to load inside another page. The desktop build uses a real browser engine.</span>
+        <span id="webNote">Web prototype: many sites refuse to load inside another page. The desktop build uses a real browser engine.</span>
         <a class="btn btn-ghost btn-small" href="${esc(parsed.href)}" target="_blank" rel="noopener noreferrer">Open in new tab ↗</a>
       </div>
-      <iframe src="${esc(parsed.href)}" sandbox="allow-scripts allow-forms allow-popups" referrerpolicy="no-referrer"></iframe>
+      <iframe id="webFrame" src="${esc(parsed.href)}" sandbox="allow-scripts allow-forms allow-popups" referrerpolicy="no-referrer"></iframe>
     </div>`;
+  // A framed page can move to another site and RobotFac3 can't read where. Say so instead of showing a stale address.
+  let loads = 0;
+  $("webFrame").addEventListener("load", () => {
+    if (++loads < 2 || state.page !== parsed.href) return;
+    $("protoBadge").textContent = "MOVED";
+    $("protoBadge").className = "chip chip-warn";
+    $("webNote").textContent = `This page started at ${parsed.host} and has since moved. RobotFac3 can't see where to.`;
+    log("warn", "The framed page moved somewhere else", `started at ${parsed.host}`);
+  });
 }
 
 // ---------- Poisoned page (demo content) ----------
@@ -295,10 +327,14 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 async function runAgent(task) {
   $("agentOut").innerHTML = "";
   log("info", "Agent task", task);
-  // Payment details are taken only from what the human typed, never from page content.
-  const pay = task.match(/(\d+(?:\.\d{1,9})?)\s*sol\s+to\s+(\S+\.(?:sns|sol))/i);
+  // Payment details come only from what the human typed, and only when the whole sentence fits one strict shape.
+  const pay = parsePaymentRequest(task);
+  if (pay.kind === "unclear") {
+    log("warn", "Agent couldn't read that payment exactly", task);
+    return say("I couldn't read exactly one amount and one name, so I'm not going to guess. Write it like: Send 0.5 SOL to name.sns", "t-warn");
+  }
 
-  if (!pay) {
+  if (pay.kind === "none") {
     say("Reading page content…");
     await wait(500);
     const hit = state.page === "rf3://trap" ? detectInjection(TRAP_TEXT) : null;
@@ -312,12 +348,15 @@ async function runAgent(task) {
     return say("Summary for you: this is an airdrop scam page with hidden instructions aimed at AI agents. Don't connect your wallet.", "t-bone");
   }
 
-  const [, amount, name] = pay;
+  const { amount, name } = pay;
   say(`Resolving ${name.toLowerCase()}…`);
   let info;
   try { info = await resolveName(name); } catch (e) { return say(`Couldn't resolve ${name}: ${e.message}`, "t-warn"); }
   say(`${info.display} → ${short(info.target)} (${info.via})`);
+  const typedSol = info.typedTld === ".sol";
+  if (typedSol) say(`You typed .sol; I looked up ${info.display}. Check the address on the approval screen.`, "t-warn");
   const verdict = evaluateAgentPayment({ amount, origin: "user" });
+  if (verdict.verdict === "block") return say(`Security core: BLOCKED. ${verdict.reason}`, "t-red");
   if (verdict.verdict === "escalate") {
     say(`Security core: needs you. ${verdict.reason}`, "t-warn");
     log("warn", "Agent over its spend limit, asking the human", verdict.reason);
@@ -326,17 +365,37 @@ async function runAgent(task) {
     log("ok", "Agent payment within policy", verdict.reason);
   }
   say("Simulating, then handing to you for approval…");
-  reviewPayment({ to: info.target, label: info.display, amount, source: "agent", overLimit: verdict.verdict === "escalate" });
+  reviewPayment({ to: info.target, label: info.display, amount, source: "agent", typedSol });
 }
 
 // ---------- Review: simulate, explain, a human approves, Phantom signs ----------
-async function reviewPayment({ to, label, amount, source, overLimit }) {
-  const from = state.wallet || DEMO_PAYER;
+// Everything shown on this sheet is derived from the same values that are serialized into the message.
+async function reviewPayment({ to, label, amount, source, typedSol }) {
+  const seq = ++reviewSeq;
+  const superseded = () => seq !== reviewSeq;
+  const from = state.wallet || DEMO_PAYERS.find((a) => a !== to);
   const demo = !state.wallet;
-  openModal(`<p class="mono">Simulating on Solana mainnet…</p>`);
-  let message, sim, deltas;
+  openModal(`<p class="mono">Checking the name again and simulating on Solana mainnet…</p>`);
+
+  let lamports, message, sim, deltas, overLimit = false;
   try {
-    const lamports = solToLamports(amount);
+    lamports = solToLamports(amount);
+    if (source === "agent") {
+      // The policy is enforced here as well as in the agent, so it can't be skipped by a different caller.
+      const verdict = evaluateAgentPayment({ amount: lamportsToSol(lamports), origin: "user" });
+      if (verdict.verdict === "block") throw new Error(verdict.reason);
+      overLimit = verdict.verdict === "escalate";
+    }
+    // The name was resolved when its page was drawn, which may be a while ago. Ask the chain again.
+    const fresh = await resolveName(label);
+    if (superseded()) return;
+    if (fresh.target !== to) {
+      log("block", `${label} now points somewhere else`, `was ${to}, now ${fresh.target}`);
+      openModal(`<h3>${esc(label)} changed while you were looking</h3>
+        <p>It pointed to <span class="mono break">${esc(to)}</span> and now points to <span class="mono break">${esc(fresh.target)}</span>. Nothing was sent. Look the name up again.</p>
+        <div class="sheet-actions"><button class="btn btn-ghost" data-close>Close</button></div>`);
+      return;
+    }
     const { value: latest } = await rpc("getLatestBlockhash", [{ commitment: "confirmed" }]);
     message = buildTransferMessage({ from, to, lamports, blockhash: latest.blockhash });
     const watch = from === to ? [from] : [from, to];
@@ -345,30 +404,38 @@ async function reviewPayment({ to, label, amount, source, overLimit }) {
       encoding: "base64", sigVerify: false, replaceRecentBlockhash: true, commitment: "confirmed",
       accounts: { encoding: "base64", addresses: watch },
     }]);
+    if (superseded()) return;
     const after = sim.value.accounts;
     deltas = after ? watch.map((_, i) => BigInt(after[i]?.lamports ?? 0) - BigInt(before.value[i]?.lamports ?? 0)) : null;
     log(sim.value.err ? "warn" : "ok", sim.value.err ? "Simulation says this would FAIL" : "Simulation passed", `slot ${sim.context.slot} · ${sim.value.unitsConsumed ?? "?"} compute units`);
   } catch (e) {
-    log("warn", "Simulation unavailable", e.message);
-    openModal(`<h3>Couldn't simulate</h3><p>${esc(e.message)}</p><p>No simulation, no signature. Try again in a few seconds.</p>
+    if (superseded()) return;
+    log("warn", "Review stopped", e.message);
+    openModal(`<h3>Couldn't prepare this payment</h3><p>${esc(e.message)}</p><p>No simulation, no signature. Try again in a few seconds.</p>
       <div class="sheet-actions"><button class="btn btn-ghost" data-close>Close</button></div>`);
     return;
   }
+
   const simulatedAt = Date.now();
   const ok = !sim.value.err;
+  const shown = lamportsToSol(lamports);
   const fmt = (d) => `${d > 0n ? "+" : ""}${lamportsToSol(d)} SOL`;
   openModal(`
     <div class="row">
       <span class="chip ${source === "agent" ? "chip-solid" : "chip-bone"}">${source === "agent" ? "Agent is asking" : "You're sending"}</span>
       <span class="chip chip-red">mainnet · real SOL</span>
     </div>
-    <h3>Send ${esc(amount)} SOL to ${esc(label)}</h3>
-    <p class="mono break">${esc(to)}</p>
+    <h3>Send ${esc(shown)} SOL to ${esc(label)}</h3>
+    <dl class="facts">
+      <dt>To</dt><dd>${esc(to)}</dd>
+      <dt>From</dt><dd>${esc(from)}${demo ? " (demo address, read-only)" : ""}</dd>
+    </dl>
+    ${typedSol ? `<div class="notice notice-warn"><b>You typed .sol; this pays ${esc(label)}.</b> The .sol ending is moving to a separate registry where the same name may belong to someone else. Check the address above.</div>` : ""}
     ${overLimit ? `<div class="notice notice-warn">Over the agent's ${esc(getCap())} SOL limit. Only approve if you asked for this.</div>` : ""}
     <div class="sim ${ok ? "sim-ok" : "sim-bad"}">
       <b class="${ok ? "t-ok" : "t-red"}">${ok ? "✓ Simulation passed" : "✕ This transaction would fail"}</b>
       ${deltas ? `<div class="sim-grid">
-        <span class="muted">${demo ? "demo wallet" : "your wallet"}</span><span>${esc(fmt(deltas[0]))}</span>
+        <span class="muted">${demo ? "demo address" : "your wallet"}</span><span>${esc(fmt(deltas[0]))}</span>
         ${deltas.length > 1 ? `<span class="muted">${esc(label)}</span><span>${esc(fmt(deltas[1]))}</span>` : ""}
       </div>` : ""}
       ${ok ? "" : `<p class="mono">${esc(JSON.stringify(sim.value.err))}</p>`}
@@ -379,22 +446,34 @@ async function reviewPayment({ to, label, amount, source, overLimit }) {
       <button class="btn btn-ghost" id="rejectBtn">Reject</button>
       <button id="approveBtn" class="btn btn-red" ${demo || !ok ? "disabled" : ""}>Approve → sign in Phantom</button>
     </div>`);
-  $("rejectBtn").addEventListener("click", () => { log("info", "Rejected by the human", `${amount} SOL to ${label}`); closeModal(); });
+
+  $("rejectBtn").addEventListener("click", () => { log("info", "Rejected by the human", `${shown} SOL to ${label}`, "YOU"); closeModal(); });
   $("approveBtn").addEventListener("click", async () => {
+    if (superseded() || state.signing) return;
+    if (demo || !ok) return;
+    if (state.wallet !== from) {
+      log("warn", "Wallet changed since this was simulated, starting over", "", "YOU");
+      return reviewPayment({ to, label, amount, source, typedSol });
+    }
     if (Date.now() - simulatedAt > SIMULATION_MAX_AGE_MS) {
       log("info", "Simulation went stale, running it again");
-      return reviewPayment({ to, label, amount, source, overLimit });
+      return reviewPayment({ to, label, amount, source, typedSol });
     }
+    state.signing = true;
+    $("approveBtn").disabled = true;
+    $("rejectBtn").disabled = true;
+    $("approveBtn").textContent = "Waiting for Phantom — cancel it there";
     try {
-      $("approveBtn").disabled = true;
-      log("info", "Human approved, opening Phantom", `${amount} SOL to ${label}`);
+      log("info", "Human approved, opening Phantom", `${shown} SOL to ${label}`, "YOU");
       const signature = await phantom.signAndSend(message);
-      log("ok", "Sent", signature);
+      log("ok", "Sent", signature, "YOU");
+      state.signing = false;
       openModal(`<h3 class="t-ok">Sent ✓</h3>
         <p><a class="mono break" target="_blank" rel="noopener noreferrer" href="https://explorer.solana.com/tx/${esc(signature)}">${esc(signature)}</a></p>
         <div class="sheet-actions"><button class="btn btn-ghost" data-close>Done</button></div>`);
     } catch (e) {
-      log("warn", "Not sent", e.message);
+      state.signing = false;
+      log("warn", "Not sent", e.message, "YOU");
       closeModal();
     }
   });
@@ -421,18 +500,26 @@ $("settingsBtn").addEventListener("click", () => {
 
 // ---------- Boot ----------
 async function boot() {
-  phantom.provider()?.on?.("accountChanged", (pk) => { state.wallet = pk ? pk.toString() : null; renderWallet(); });
-  try {
-    const res = await fetch("src/vendor/bip39-english.txt");
-    if (res.ok) setWordlist(await res.text());
-  } catch { /* the leak check falls back to its broader rule */ }
+  phantom.provider()?.on?.("accountChanged", (pk) => {
+    state.wallet = pk ? pk.toString() : null;
+    renderWallet();
+    if (!$("modal").hidden && !state.signing) { closeModal(); log("warn", "Wallet account changed, review closed"); }
+  });
+  ready = (async () => {
+    try {
+      const res = await fetch("src/vendor/bip39-english.txt");
+      if (res.ok) setWordlist(await res.text());
+    } catch { /* handled below */ }
+  })();
   try {
     const info = await (await fetch("/relay/info")).json();
     $("upstream").textContent = `rpc: ${info.upstream}`;
   } catch { $("upstream").textContent = "rpc: relay offline"; }
+  await ready;
   setMode("human");
   $("log").innerHTML = "";
   log("ok", "Security core online", "leak check · provenance rule · simulation · human approval");
+  if (isDegraded()) log("warn", "Leak check degraded", "The seed-phrase word list didn't load, so the check is using a broader rule that flags more harmless text.");
   navigate("rf3://home");
 }
 boot();

@@ -39,10 +39,14 @@ export function lamportsToSol(lamports) {
 }
 
 export function buildTransferMessage({ from, to, lamports, blockhash }) {
-  const amount = BigInt(lamports);
+  if (typeof lamports !== "bigint") throw new Error("Amount must be a bigint of lamports");
+  const amount = lamports;
   if (amount <= 0n || amount > U64_MAX) throw new Error("Amount out of range");
+  // SOL sent to the System Program address is unrecoverable, and it would also collide with the program account below.
+  if (from === SYSTEM_PROGRAM || to === SYSTEM_PROGRAM) throw new Error("Refusing to pay the System Program address");
   const fromKey = decodeAddress(from);
   const toKey = decodeAddress(to);
+  if (typeof blockhash !== "string" || blockhash.length > 44) throw new Error("Bad blockhash");
   const hash = decode(blockhash);
   if (hash.length !== 32) throw new Error("Bad blockhash");
   const self = from === to;
