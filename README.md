@@ -34,17 +34,25 @@ Optional: get a free RPC URL from helius.dev and paste it under **RPC** (the pub
 - `vite.config.js`: `/rpc` proxy (the public RPC blocks browsers; the Rust core does this in the desktop build)
 
 ## Next build
-Follows [`../mdfiles/guideline-docs/robotfac3-build-guidelines.md`](../mdfiles/guideline-docs/robotfac3-build-guidelines.md), distilled from the Colosseum World's Fair resource links. Deadline **Oct 12, 2026**.
-1. Free RPC key (Helius/QuickNode) behind the proxy
-2. Migrate to `@solana/kit`
-3. Devnet toggle
-4. Solana Actions / Blinks in the address bar
+Follows [`../mdfiles/guideline-docs/robotfac3-build-guidelines-v2.md`](../mdfiles/guideline-docs/robotfac3-build-guidelines-v2.md) (section 3 has the full order and what each step needs). Deadline **Oct 12, 2026**.
+
+**Time-critical:** SNS pauses `.sol` lookups at mainnet slot 452,825,395, about **Oct 2, 2026**. The address bar must resolve `.sns` before then.
+
+0. License file, public repo, team registration
+1. Helius Free key behind the relay; secrets cleanup
+2. `.sns` resolution + DLP false-positive fixes
+3. Port to `@solana/kit` 7.1.1 (exact pins)
+4. Devnet toggle with cluster check and post-send verification
 5. Phantom Connect fallback (needs a Phantom Portal App ID)
-6. Agent allowance via the official Subscriptions program + revoke
-7. x402 payments with an approval sheet
-8. Tauri shell + IPC lockdown
-9. CamoFox sidecar (disclosed third-party, MPL-2.0)
-10. Metaplex agent identity
+6. Agent key + allowance via the official Subscriptions program (USDC) + revoke
+7. x402 payments through a same-origin relay with an approval sheet
+8. Agent runtime: LLM behind the relay, provenance-gated actions
+9. Solana Actions / Blinks (first-party client)
+10. Agent browsing: Playwright + declared identity (Web Bot Auth)
+11. Agent identity (registry lookup)
+12. Tauri shell (source + video)
 
 ## Hackathon disclosures
-All code here was written during the contest period (from Sept 18, 2026; see git history), with AI assistance (Claude Code). Third-party: `@solana/web3.js`, `@bonfida/spl-name-service`, Vite, Tailwind; planned: CamoFox/Camoufox (MPL-2.0).
+All code here was written during the contest period (first commit Sept 18, 2026; see git history), with AI assistance (Claude Code). Third-party today: `@solana/web3.js`, `@bonfida/spl-name-service`, Vite, Tailwind, `vite-plugin-node-polyfills` (all MIT). The full checklist is section 6 of the guidelines.
+
+Correction: an earlier version of this README listed CamoFox as a planned dependency under MPL-2.0. CamoFox itself is MIT (its Camoufox engine is MPL-2.0), and the v2 guidelines recommend not using it; that decision is pending team confirmation.
