@@ -84,7 +84,7 @@ Judged harmless and left as notes: the spend limit lives in `localStorage` share
 6. Agent → `send 0,5 sol to toly.sns`: refused (it won't guess at an amount). Type `tоly.sns` with a Cyrillic о: refused.
 
 ## Next
-Follows [`../mdfiles/guideline-docs/robotfac3-build-guidelines-v2.md`](../mdfiles/guideline-docs/robotfac3-build-guidelines-v2.md). That plan was written around npm packages; the team has since ruled those out, so the agent allowance, x402 and agent-key pieces move into the Rust core under the security lead's dependency policy. Deadline **Oct 12, 2026**.
+The team's build guidelines (kept outside this repo) were written around npm packages. The team has since ruled those out, so the next pieces (on-chain agent allowance, x402 payments, the agent's own spending key) move into the Rust core of the Tauri shell under the security lead's dependency policy. Hackathon deadline: **Oct 12, 2026**.
 
 ## Hackathon disclosures
 All code was written during the contest period (first commit Sept 18, 2026; see git history), with AI assistance (Claude Code). Third-party content in this repo: the BIP39 English word list (from `bitcoin/bips`). Test fixtures were generated with `@solana/web3.js` (MIT) and `@bonfida/spl-name-service` (MIT), which are not dependencies. SNS resolution follows the logic of `@bonfida/spl-name-service`.
