@@ -3,6 +3,7 @@ import { rpc } from "./solana/rpc.js";
 import { resolveName, SnsError } from "./solana/sns.js";
 import { buildTransferMessage, unsignedWire, toBase64, solToLamports, lamportsToSol } from "./solana/tx.js";
 import * as phantom from "./solana/phantom.js";
+import { prepare, search as searchProjects, safeUrl, CHAIN_LABELS } from "./search.js";
 import { scanForSecrets, setWordlist, isDegraded, detectInjection, parsePaymentRequest, evaluateAgentPayment, getCap } from "./security.js";
 
 const $ = (id) => document.getElementById(id);
@@ -83,9 +84,30 @@ function setMode(mode) {
 }
 document.querySelectorAll(".mode-btn").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
 
+// ---------- Desktop (Tauri) ----------
+const desktop = globalThis.__TAURI__?.core;
+if (desktop) document.documentElement.classList.add("desktop");
+async function desktopOpen(url) {
+  try { await desktop.invoke("open_site", { url }); }
+  catch (err) { log("warn", "Couldn't open that site", String(err)); }
+}
+// New-tab links open as RobotFac3 site windows instead of doing nothing.
+if (desktop) document.addEventListener("click", (e) => {
+  const a = e.target.closest?.('a[target="_blank"]');
+  if (!a || !a.href.startsWith("https://")) return;
+  e.preventDefault();
+  desktopOpen(a.href);
+});
+
 // ---------- Wallet ----------
 function renderWallet() { $("walletBtn").textContent = state.wallet ? `◉ ${short(state.wallet)}` : "Connect Phantom"; }
 $("walletBtn").addEventListener("click", async () => {
+  if (!phantom.provider() && desktop) {
+    openModal(`<h3>Wallet signing isn't in the desktop app yet</h3>
+      <p>Browser extensions like Phantom can't run inside a desktop app. Signing will move to a companion page in your normal browser. Until then, use the web version to send.</p>
+      <div class="sheet-actions"><button class="btn btn-ghost" data-close>Close</button></div>`);
+    return;
+  }
   if (!phantom.provider()) {
     openModal(`<h3>Phantom not found</h3>
       <p>RobotFac3 never holds your wallet key. It connects to the wallet you already use. Install the Phantom extension, then reload.</p>
@@ -115,6 +137,7 @@ function detect(input) {
   if (/^[^\s\/:@?#]+\.(sns|sol)$/i.test(s)) return { kind: "sns", label: "SNS", cls: "chip-sns" };
   if (/\.eth$/i.test(s)) return { kind: "eth", label: "ENS", cls: "chip-sky" };
   if (/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(s)) return { kind: "https", label: "HTTPS", cls: "chip-ok" };
+  if (s) return { kind: "search", label: "SEARCH", cls: "chip-bone" };
   return { kind: "unknown", label: "—", cls: "chip-muted" };
 }
 function paintBadge() {
@@ -143,14 +166,76 @@ function navigate(input, { silent } = {}) {
   const d = detect(input);
   if (input === "rf3://home") return renderHome();
   if (input === "rf3://trap") return renderTrap(silent);
+  if (input === "rf3://networks") return renderNetworks();
   if (d.kind === "sns") return renderName(input, silent);
   if (d.kind === "https") return renderWeb(/^https:\/\//i.test(input) ? input : `https://${input}`, silent);
   if (d.kind === "http") return void ($("view").innerHTML = note("Plain http is off", "RobotFac3 only opens https pages. Try the same address with https://"));
   if (d.kind === "eth") return void ($("view").innerHTML = note("ENS (.eth) names aren't supported yet", "Same address bar, next chain. Solana first for Colosseum."));
+  if (d.kind === "search") return renderSearch(input);
   $("view").innerHTML = note("Not sure where that goes", "Try a .sns name or a web address.");
 }
 const note = (title, text) => `<div class="center-note"><h2>${esc(title)}</h2><p>${esc(text)}</p></div>`;
 function bindGo() { $("view").querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => navigate(b.dataset.go))); }
+
+// ---------- Search ----------
+// The index ships with the app. The query is matched here, on this computer; it is never sent anywhere.
+let searchIndex = null;
+function loadSearchIndex() {
+  searchIndex ??= fetch("data/projects.json")
+    .then((r) => { if (!r.ok) throw new Error("missing"); return r.json(); })
+    .then((d) => ({ built: d.built, sources: d.sources || [], items: prepare(d.projects) }));
+  return searchIndex;
+}
+async function renderSearch(query, chain = "all") {
+  $("view").innerHTML = `<section class="page"><p class="mono muted">Searching…</p></section>`;
+  let idx;
+  try { idx = await loadSearchIndex(); } catch {
+    searchIndex = null;
+    return void ($("view").innerHTML = note("Search index missing", "Build it with: python3 tools/build_index.py"));
+  }
+  if (state.page !== query) return;
+  const results = searchProjects(idx.items, query, chain);
+  const chips = ["all", ...Object.keys(CHAIN_LABELS)].map((c) =>
+    `<button class="chip ${c === chain ? "chip-solid" : "chip-muted"}" data-chain="${c}">${c === "all" ? "All chains" : esc(CHAIN_LABELS[c])}</button>`).join("");
+  const row = (p) => `<li><button class="result" data-url="${esc(p.url)}">
+      <span class="result-host mono">${esc(new URL(p.url).hostname)}</span>
+      <b>${esc(p.name)}</b>
+      ${p.description ? `<span>${esc(p.description)}</span>` : ""}
+      <small>${esc(p.category)} · ${p.chains.map((c) => esc(CHAIN_LABELS[c] || c)).join(" · ")}</small>
+    </button></li>`;
+  $("view").innerHTML = `
+  <section class="page">
+    <p class="eyebrow">Search · ${idx.items.length.toLocaleString()} projects · index ${esc(idx.built)}</p>
+    <div class="search-chips">${chips}</div>
+    <p class="muted search-note">Private: this search ran on your computer. Results come from ${idx.sources.map((s) => esc(s.name)).join(", ")} and aren't verified yet. Check the address before you connect a wallet.</p>
+    <ol class="results">${results.map(row).join("") || `<li class="muted">No projects match “${esc(query)}”${chain !== "all" ? ` on ${esc(CHAIN_LABELS[chain])}` : ""}.</li>`}</ol>
+  </section>`;
+  $("view").querySelectorAll("[data-chain]").forEach((b) => b.addEventListener("click", () => renderSearch(query, b.dataset.chain)));
+  $("view").querySelectorAll("[data-url]").forEach((b) => b.addEventListener("click", () => { const u = safeUrl(b.dataset.url); if (u) navigate(u); }));
+}
+
+// ---------- Networks ----------
+function renderNetworks() {
+  const chains = [{ id: "solana", name: "Solana", chainId: null }, ...(state.chains || [])];
+  $("view").innerHTML = `
+  <section class="page">
+    <p class="eyebrow">Networks</p>
+    <h1 class="hero">Every Colosseum track chain, read live.</h1>
+    <p class="lede">Read-only. RobotFac3 reads these chains through its own relay, which first checks each one is the chain it claims to be. It can't send on any of them. Sending stays with your wallet.</p>
+    <div class="grid">
+      ${chains.map((c) => `<div class="card tile"><b>${esc(c.name)}</b><output id="net-${esc(c.id)}" class="chip chip-muted">checking…</output><small>${c.chainId ? `chain ID ${c.chainId}` : "mainnet-beta"}</small></div>`).join("")}
+      <div class="card tile"><b>Zcash</b><output class="chip chip-warn">not connected</output><small>No public JSON-RPC endpoint. Needs a Zcash node.</small></div>
+    </div>
+  </section>`;
+  chains.forEach(async (c) => {
+    let text, cls = "chip chip-ok", title = "";
+    try {
+      text = c.id === "solana" ? `slot ${(await rpc("getSlot")).toLocaleString()}` : `block ${parseInt(await rpc("eth_blockNumber", [], c.id), 16).toLocaleString()}`;
+    } catch (err) { text = "unreachable"; cls = "chip chip-red"; title = err.message; }
+    const el = state.page === "rf3://networks" && $(`net-${c.id}`);
+    if (el) { el.textContent = text; el.className = cls; el.title = title; }
+  });
+}
 
 // ---------- Home ----------
 const DIRECTORY = [
@@ -173,6 +258,8 @@ function renderHome() {
       ${tile("toly.sns", "Resolve a name live from Solana", 'data-go="toly.sns"')}
       ${tile("Poisoned page", "A page with hidden orders for AI agents", 'data-go="rf3://trap"')}
       ${tile("Leak test", "Paste a seed phrase into the address bar", 'data-demo="leak"')}
+      ${tile("Networks", "Live read links to every Colosseum track chain", 'data-go="rf3://networks"')}
+      ${tile("Search Web3", "Type anything in the address bar. Try: lending", 'data-go="lending"')}
     </div>
     <h3 class="section-title">Solana directory</h3>
     <div class="grid">
@@ -251,6 +338,12 @@ function renderWeb(url, silent) {
   $("address").value = parsed.href; // always show the parsed address, not what was typed
   paintBadge();
   if (!silent) log("info", "HTTPS page opened", parsed.href);
+  if (desktop) {
+    // A real browser window with no access to RobotFac3's core, wallet or storage.
+    desktopOpen(parsed.href);
+    $("view").classList.remove("flush");
+    return void ($("view").innerHTML = note(`${parsed.host} opened in its own window`, "Websites run in separate windows that can't talk to RobotFac3's security core or your wallet."));
+  }
   $("view").classList.add("flush");
   // No allow-same-origin: the framed page gets an opaque origin and can never reach RobotFac3's own storage or wallet session.
   $("view").innerHTML = `
@@ -512,8 +605,9 @@ async function boot() {
     } catch { /* handled below */ }
   })();
   try {
-    const info = await (await fetch("/relay/info")).json();
+    const info = desktop ? await desktop.invoke("rpc_info") : await (await fetch("/relay/info")).json();
     $("upstream").textContent = `rpc: ${info.upstream}`;
+    state.chains = info.chains || [];
   } catch { $("upstream").textContent = "rpc: relay offline"; }
   await ready;
   setMode("human");

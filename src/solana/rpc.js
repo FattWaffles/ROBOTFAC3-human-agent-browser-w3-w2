@@ -1,6 +1,14 @@
 // JSON-RPC over fetch. The browser only ever talks to the same-origin relay (/rpc);
 // the relay forwards to Solana without the browser's Origin header and keeps any API key out of the page.
 let endpoint = "/rpc";
+// In the desktop app the page has no network path to Solana: the Rust core makes the call.
+const desktop = globalThis.__TAURI__?.core;
+async function desktopFetch(id, method, params, chain) {
+  const { status, body } = chain === "solana"
+    ? await desktop.invoke("rpc", { id, method, params })
+    : await desktop.invoke("evm_rpc", { chain, id, method, params });
+  return new Response(body || null, { status });
+}
 
 export function setEndpoint(url) { endpoint = url; }
 
@@ -8,18 +16,19 @@ export class RpcError extends Error {
   constructor(message, code) { super(message); this.name = "RpcError"; this.code = code; }
 }
 
-export async function rpc(method, params = []) {
+// chain: "solana" (default) or an EVM track chain id from chains.json, e.g. "base".
+export async function rpc(method, params = [], chain = "solana") {
   // A random id per call, checked on the way back, so a stray or replayed response can't be taken for this one.
   const id = crypto.getRandomValues(new Uint32Array(1))[0];
   let res;
   try {
-    res = await fetch(endpoint, {
+    res = desktop ? await desktopFetch(id, method, params, chain) : await fetch(chain === "solana" ? endpoint : `/rpc/evm/${encodeURIComponent(chain)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
     });
-  } catch {
-    throw new RpcError("Can't reach the relay. Is relay.py running?", "network");
+  } catch (err) {
+    throw new RpcError(desktop ? String(err || "The desktop app couldn't reach Solana.") : "Can't reach the relay. Is relay.py running?", "network");
   }
   if (res.status === 429) throw new RpcError("Solana RPC is rate-limiting. Wait a few seconds and retry.", 429);
   let body;

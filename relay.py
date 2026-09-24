@@ -36,11 +36,12 @@ RPC_METHODS = {
     "getSignatureStatuses", "getSlot", "getTokenLargestAccounts", "getTransaction", "simulateTransaction",
 }
 
-STATIC_DIRS = {"src": {".js", ".txt"}, "public": {".png", ".svg", ".ico"}}
+STATIC_DIRS = {"src": {".js", ".txt"}, "public": {".png", ".svg", ".ico"}, "data": {".json"}}
 STATIC_FILES = {"index.html", "styles.css"}
 MIME = {
     ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
     ".txt": "text/plain; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon",
+    ".json": "application/json",
 }
 SECURITY_HEADERS = {
     "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; "
@@ -70,6 +71,33 @@ if HELIUS_KEY and not HELIUS_KEY.replace("-", "").isalnum():
     sys.exit("HELIUS_API_KEY has unexpected characters")
 UPSTREAM_NAME = "helius" if HELIUS_KEY else "public"
 UPSTREAM_URL = ("https://mainnet.helius-rpc.com/?api-key=" + HELIUS_KEY) if HELIUS_KEY else "https://api.mainnet-beta.solana.com"
+
+# EVM track chains, read-only. Same registry as the Rust core. No eth_sendRawTransaction: the wallet sends, not RobotFac3.
+_CHAINS = json.loads((Path(__file__).resolve().parent / "chains.json").read_text())
+EVM_METHODS = set(_CHAINS["evmMethods"])
+EVM_CHAINS = {}
+for _c in _CHAINS["evm"]:
+    _override = os.environ.get(_c["id"].upper() + "_RPC_URL", "")
+    EVM_CHAINS[_c["id"]] = {"id": _c["id"], "name": _c["name"], "chainId": _c["chainId"],
+                            "url": _override if _override.startswith("https://") else _c["url"]}
+VERIFIED_CHAINS = set()
+
+
+def verify_chain(chain):
+    """Fails closed: an upstream is used only after it reports the chain ID the registry expects."""
+    if chain["id"] in VERIFIED_CHAINS:
+        return True
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "eth_chainId", "params": []}).encode()
+    request = urllib.request.Request(chain["url"], data=body, method="POST",
+                                     headers={"Content-Type": "application/json", "User-Agent": "robotfac3-relay/0.2"})
+    try:
+        with urllib.request.urlopen(request, timeout=20) as upstream:
+            ok = int(json.loads(upstream.read())["result"], 16) == chain["chainId"]
+    except Exception:
+        return False
+    if ok:
+        VERIFIED_CHAINS.add(chain["id"])
+    return ok
 
 
 def resolve_static(url_path):
@@ -134,7 +162,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self.host_ok():
             return self.reply(421, {"error": "unexpected Host"})
         if self.path == "/relay/info":
-            return self.reply(200, {"upstream": UPSTREAM_NAME, "methods": sorted(RPC_METHODS)})
+            return self.reply(200, {"upstream": UPSTREAM_NAME, "methods": sorted(RPC_METHODS),
+                                    "chains": [{"id": c["id"], "name": c["name"], "chainId": c["chainId"]} for c in EVM_CHAINS.values()]})
         target = resolve_static(self.path)
         if target is None:
             return self.reply(404, {"error": "not found"})
@@ -149,7 +178,13 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(403, {"error": "cross-origin requests are refused"})
         if self.headers.get("Sec-Fetch-Site", "same-origin") != "same-origin":
             return self.reply(403, {"error": "cross-site requests are refused"})
-        if self.path != "/rpc":
+        chain = None
+        if self.path == "/rpc":
+            upstream_url, methods = UPSTREAM_URL, RPC_METHODS
+        elif self.path.startswith("/rpc/evm/") and self.path[len("/rpc/evm/"):] in EVM_CHAINS:
+            chain = EVM_CHAINS[self.path[len("/rpc/evm/"):]]
+            upstream_url, methods = chain["url"], EVM_METHODS
+        else:
             return self.reply(404, {"error": "not found"})
         if self.headers.get("Transfer-Encoding") is not None or len(self.headers.get_all("Content-Length") or []) != 1:
             return self.reply(400, {"error": "exactly one Content-Length and no Transfer-Encoding"})
@@ -166,12 +201,14 @@ class Handler(BaseHTTPRequestHandler):
             call = json.loads(raw)
         except (ValueError, RecursionError):
             return self.reply(400, {"error": "invalid JSON"})
-        if not isinstance(call, dict) or not isinstance(call.get("method"), str) or call["method"] not in RPC_METHODS:
+        if not isinstance(call, dict) or not isinstance(call.get("method"), str) or call["method"] not in methods:
             return self.reply(403, {"jsonrpc": "2.0", "id": None, "error": {"code": -32601, "message": "method not allowed by the relay"}})
 
         # Re-serialize so only a well-formed single call goes upstream; no browser headers are forwarded.
         body = json.dumps({"jsonrpc": "2.0", "id": call.get("id", 1), "method": call["method"], "params": call.get("params", [])}).encode()
-        request = urllib.request.Request(UPSTREAM_URL, data=body, method="POST",
+        if chain is not None and not verify_chain(chain):
+            return self.reply(502, {"jsonrpc": "2.0", "id": call.get("id"), "error": {"code": -32000, "message": "couldn't confirm the upstream is %s, so the relay won't use it" % chain["name"]}})
+        request = urllib.request.Request(upstream_url, data=body, method="POST",
                                          headers={"Content-Type": "application/json", "User-Agent": "robotfac3-relay/0.2"})
         try:
             with urllib.request.urlopen(request, timeout=20) as upstream:

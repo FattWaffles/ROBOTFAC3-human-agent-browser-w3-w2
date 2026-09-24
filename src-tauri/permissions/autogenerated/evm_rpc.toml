@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-evm-rpc"
+description = "Enables the evm_rpc command without any pre-configured scope."
+commands.allow = ["evm_rpc"]
+
+[[permission]]
+identifier = "deny-evm-rpc"
+description = "Denies the evm_rpc command without any pre-configured scope."
+commands.deny = ["evm_rpc"]

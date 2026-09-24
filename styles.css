@@ -27,6 +27,7 @@ h1, h2, h3, p { margin: 0; }
 .site-links > a:not(.btn) { color: var(--ash); text-decoration: none; }
 .site-links > a:not(.btn):hover { color: var(--bone); }
 @media (max-width: 640px) { .site-brand .chip { display: none; } }
+.desktop .site-nav { display: none; }
 .chrome { background: var(--ink-2); border-bottom: 1px solid var(--ink-3); }
 .chrome-top { display: flex; align-items: center; gap: 12px; padding: 8px 12px 0; }
 .logo { height: 36px; }
@@ -87,6 +88,17 @@ h1, h2, h3, p { margin: 0; }
 .tile:hover { border-color: var(--bone); }
 .tile b { display: block; }
 .tile span { display: block; font-size: 14px; color: var(--ash); }
+.search-chips { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 6px; }
+.search-chips .chip { border: 0; cursor: pointer; font-size: 12px; padding: 4px 10px; }
+.search-note { margin-top: 12px; font-size: 13px; }
+.results { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.result { display: block; width: 100%; text-align: left; background: none; border: 1px solid transparent; border-radius: 8px; padding: 12px 14px; }
+.result:hover { border-color: var(--ink-3); background: var(--ink-2); }
+.result b { display: block; font-size: 17px; color: var(--sky); }
+.result span { display: block; margin-top: 2px; font-size: 14px; }
+.result .result-host { margin: 0; font-size: 12px; color: var(--ok); }
+.result small { display: block; margin-top: 6px; font-family: var(--mono); font-size: 11px; color: var(--ash); }
+.tile output { display: inline-block; margin-top: 8px; }
 .tile small { display: block; margin-top: 8px; font-family: var(--mono); font-size: 11px; color: var(--ash); }
 .tile-red { border-color: rgba(225, 6, 0, 0.4); }
 .tile-red:hover { border-color: var(--blood); }

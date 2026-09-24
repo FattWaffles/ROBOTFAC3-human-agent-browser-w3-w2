@@ -15,6 +15,27 @@ Open http://localhost:5173 in Chrome. With the Phantom extension installed you c
 Optional: put `HELIUS_API_KEY=...` in `.env.local` (gitignored). The relay reads it; the page never sees it.
 Without a key the relay uses the free public endpoint, which rate-limits quickly and refuses one lookup (see "Not verified").
 
+## Networks (read-only)
+`chains.json` lists the Colosseum World's Fair track chains: Solana plus Ethereum, Base, Arbitrum One, HyperEVM, Tempo and Robinhood Chain. Both `relay.py` and the desktop core read it; the page never sees it.
+- Each EVM upstream must report the expected chain ID before any call goes through. A wrong or spoofed endpoint is refused.
+- Read methods only. No `eth_sendRawTransaction`: the wallet sends, not RobotFac3.
+- Override an endpoint with `<ID>_RPC_URL`, e.g. `BASE_RPC_URL=https://...` (https only).
+- Zcash isn't connected: there's no public JSON-RPC endpoint.
+- Open `rf3://networks` (the Networks tile on the home page) to see every chain's live block.
+
+## Desktop app (Tauri v2, debug build only)
+`src-tauri/` wraps the same UI in a native window. Needs Rust and the Tauri CLI (`cargo install tauri-cli --version "^2" --locked`).
+```bash
+cd src-tauri && cargo tauri dev     # run it
+cd src-tauri && cargo tauri build   # RobotFac3.app + .dmg
+```
+- The UI window may call exactly four Rust commands (`rpc`, `evm_rpc`, `rpc_info`, `open_site`), granted in `capabilities/main.json`. It can't be navigated away from the app.
+- Solana RPC goes through Rust with the same method allow-list as `relay.py`; `HELIUS_API_KEY` is read from the environment and never reaches the page.
+- Websites open in their own real browser windows with no IPC access, so sites that refuse iframes work.
+- `build.rs` embeds only the files `relay.py` is allowed to serve.
+- Not yet: wallet signing. Extensions like Phantom can't run in a desktop webview; signing moves to a companion page in the system browser.
+- Rust dependencies: `tauri`, `serde_json`, `ureq` (rustls). They pull several hundred transitive crates; get security sign-off before the first build.
+
 ## Test it
 ```bash
 node --test tests/

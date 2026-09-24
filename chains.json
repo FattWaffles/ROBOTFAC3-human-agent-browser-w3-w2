@@ -1,0 +1,15 @@
+{
+  "about": "Colosseum Crypto World's Fair track chains (colosseum.com, 2026-09-23). Read by relay.py and the Rust core; never served to the page. Each upstream must report the listed chainId before it is used. Override a URL with <ID>_RPC_URL (https only).",
+  "evmMethods": [
+    "eth_chainId", "eth_blockNumber", "eth_getBalance", "eth_getCode", "eth_call",
+    "eth_getBlockByNumber", "eth_getTransactionByHash", "eth_getTransactionReceipt"
+  ],
+  "evm": [
+    { "id": "ethereum",  "name": "Ethereum",               "chainId": 1,     "url": "https://1rpc.io/eth",                   "source": "1RPC public endpoint; Ethereum has no official public endpoint (Cloudflare gateway refused block reads 2026-09-23)" },
+    { "id": "base",      "name": "Base",                   "chainId": 8453,  "url": "https://mainnet.base.org",              "source": "Base public endpoint (rate-limited)" },
+    { "id": "arbitrum",  "name": "Arbitrum One",           "chainId": 42161, "url": "https://arb1.arbitrum.io/rpc",          "source": "Arbitrum Foundation public endpoint" },
+    { "id": "hyperevm",  "name": "Hyperliquid (HyperEVM)", "chainId": 999,   "url": "https://rpc.hyperliquid.xyz/evm",       "source": "Hyperliquid public HyperEVM endpoint" },
+    { "id": "tempo",     "name": "Tempo",                  "chainId": 4217,  "url": "https://rpc.tempo.xyz",                 "source": "docs.tempo.xyz connection details: mainnet live since 2026-03-18" },
+    { "id": "robinhood", "name": "Robinhood Chain",        "chainId": 4663,  "url": "https://rpc.mainnet.chain.robinhood.com", "source": "docs.robinhood.com/chain/connecting" }
+  ]
+}

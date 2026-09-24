@@ -1,0 +1,25 @@
+[package]
+name = "robotfac3"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[build-dependencies]
+tauri-build = "2"
+
+[dependencies]
+# >= 2.11.1 for CVE-2026-42184 (build guidelines v2).
+tauri = "2.11.1"
+serde_json = "1"
+# Blocking HTTPS client for the Rust-side RPC relay. rustls, no OpenSSL, no gzip.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+
+[features]
+# Always serve the embedded UI; there is no dev server.
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true

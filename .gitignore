@@ -6,3 +6,6 @@ dist
 .DS_Store
 __pycache__
 .claude/
+src-tauri/target/
+src-tauri/web-dist/
+src-tauri/gen/
