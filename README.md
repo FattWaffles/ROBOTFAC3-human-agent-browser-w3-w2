@@ -29,14 +29,30 @@ The relay serves the site and proxies RPC, so this needs a host that runs a proc
 
 Set `RF3_PUBLIC_HOST` to every domain the relay answers on:
 ```
-RF3_PUBLIC_HOST=robotfac3.com,www.robotfac3.com,robotfac3.onrender.com
+RF3_PUBLIC_HOST=robotfac3.com,www.robotfac3.com
 ```
+The service's own `*.onrender.com` name is added at runtime from `RENDER_EXTERNAL_HOSTNAME`, so never
+guess it here. A wrong guess refuses every real request with 421 while `/healthz` keeps the platform
+health check green: a healthy-looking service serving a dead site.
 - **Leave it unset and the relay binds to 127.0.0.1 only.** Nothing is exposed by accident; a deploy that forgets it serves nobody rather than serving everybody.
 - With it set, the relay binds every interface, accepts only those Hosts (anything else is 421), accepts only `https://` origins from them, and sends HSTS. The DNS-rebinding and cross-origin defences are unchanged, just pointed at the domain instead of localhost.
 - `/healthz` answers before the Host check, because the platform's probe sets its own Host. It returns `{"ok":true}` and touches nothing else.
-- `HELIUS_API_KEY` goes in the host's dashboard, never in git.
+- `HELIUS_API_KEY` goes in the host's dashboard, never in git. Surrounding whitespace is stripped, so a pasted key with a trailing newline still starts the server.
+- Env vars with a literal `value:` in `render.yaml` are re-asserted on every blueprint sync, and any push touching that file redeploys. Edit them in the file and commit; a dashboard edit is reverted on the next push.
 
-DNS at Namecheap, after the host reports the service live: delete the default parking/redirect record, then add the records the host gives you (a CNAME for `www`, and an ALIAS/A for the apex).
+DNS at Namecheap, only after the service is live and you have read its real `*.onrender.com` name off the service page:
+
+| | Type | Host | Value |
+|---|---|---|---|
+| delete | A | `@` | `192.64.119.29` (Namecheap parking) |
+| delete | URL Redirect / CNAME | `@`, `www` | any parking rows |
+| delete | AAAA | `@`, `www` | any — Render is IPv4-only, and a stray AAAA breaks IPv6 clients only |
+| create | A | `@` | `216.24.57.1` |
+| create | CNAME | `www` | `<the real name>.onrender.com` |
+
+Use a 1-minute TTL so a mistake costs a minute. The apex must be an A record: Namecheap is not one of
+the ALIAS/ANAME providers Render documents. Keep the `www` CNAME even though the blueprint lists only
+the apex, since Render serves the www redirect at its edge and www must resolve there to reach it.
 
 ## Desktop app (Tauri v2, debug build only)
 `src-tauri/` wraps the same UI in a native window. Needs Rust and the Tauri CLI (`cargo install tauri-cli --version "^2" --locked`).

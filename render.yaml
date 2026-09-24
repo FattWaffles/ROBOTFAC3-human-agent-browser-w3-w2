@@ -1,21 +1,40 @@
 # Deploys the relay that serves robotfac3.com. Nothing to install: Python standard library only.
 # In Render: New > Blueprint, pointed at this repo. Review the env vars before the first deploy.
+#
+# Env vars with a literal `value:` below are re-asserted on EVERY blueprint sync, and any push that
+# changes this file triggers a deploy. So edit them here and commit; a dashboard edit is silently
+# reverted on the next push. Only `sync: false` vars are yours to set in the dashboard.
 services:
   - type: web
     name: robotfac3
-    runtime: python
-    plan: free
-    buildCommand: python3 --version   # no dependencies to install
-    startCommand: python3 relay.py
+    runtime: python          # not "env" (deprecated) and not "python3" (not an accepted value)
+    plan: free               # free supports custom domains and TLS; it spins down after 15 min idle
+    region: oregon           # explicit: this is the default, and it cannot be changed after creation
+    buildCommand: python --version   # no dependencies to install; must exit 0
+    startCommand: python relay.py
     healthCheckPath: /healthz
+    # Render pairs the apex with a www subdomain that redirects to it, so listing the apex alone
+    # gives both. Listing www instead would invert the redirect.
+    # If blueprint creation refuses a domain whose DNS does not point here yet, delete these two
+    # lines, create the service, cut DNS, add the domain under Settings > Custom Domains, restore.
+    domains:
+      - robotfac3.com
     envVars:
       # Every domain the relay answers on. A request carrying any other Host is refused (421).
       # Leave this unset and the relay stays bound to 127.0.0.1 and will not serve the internet.
+      # The service's own *.onrender.com name is added automatically at runtime from
+      # RENDER_EXTERNAL_HOSTNAME, so it must NOT be guessed here.
       - key: RF3_PUBLIC_HOST
-        value: robotfac3.com,www.robotfac3.com,robotfac3.onrender.com
+        value: robotfac3.com,www.robotfac3.com
+      # Pinned because Render's docs contradict each other on whether PORT is injected. If it were
+      # absent, relay.py would fall back to 5173 and the deploy would fail port detection.
+      - key: PORT
+        value: "10000"
       # Set this in the Render dashboard, never in git. Without it the free public endpoint is
       # used, which rate-limits quickly and cannot resolve NFT-held .sns names.
       - key: HELIUS_API_KEY
         sync: false
+      # Without a pin, a service created now gets Python 3.14. Every import in relay.py is stable
+      # across 3.9-3.14, so this is a conservative choice rather than a required one.
       - key: PYTHON_VERSION
         value: "3.12.6"

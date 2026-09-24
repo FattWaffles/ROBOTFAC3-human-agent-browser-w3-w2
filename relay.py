@@ -30,6 +30,12 @@ ROOT = Path(__file__).resolve().parent
 #   RF3_PUBLIC_HOST=robotfac3.com,www.robotfac3.com,robotfac3.onrender.com
 # Unset (the default) keeps the relay on this machine only, so a stray run is never exposed.
 PUBLIC_HOSTS = tuple(h.strip().lower() for h in os.environ.get("RF3_PUBLIC_HOST", "").split(",") if h.strip())
+# Render sets RENDER_EXTERNAL_HOSTNAME to the service's own *.onrender.com name. Trusting it beats
+# guessing that name: a wrong guess refuses every real request with 421 while /healthz keeps the
+# platform health check green, which looks like a healthy service serving a dead site.
+_SELF = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "").strip().lower()
+if _SELF and PUBLIC_HOSTS:  # RF3_PUBLIC_HOST stays the explicit opt-in; this only adds to it
+    PUBLIC_HOSTS += (_SELF,)
 PUBLIC = bool(PUBLIC_HOSTS)
 # Render and Fly hand the port over in PORT; RF3_PORT stays for local runs.
 PORT = int(os.environ.get("PORT") or os.environ.get("RF3_PORT") or "5173")
@@ -81,7 +87,7 @@ def read_env_local():
     return env
 
 
-HELIUS_KEY = os.environ.get("HELIUS_API_KEY") or read_env_local().get("HELIUS_API_KEY", "")
+HELIUS_KEY = (os.environ.get("HELIUS_API_KEY") or read_env_local().get("HELIUS_API_KEY", "")).strip()
 if HELIUS_KEY and not HELIUS_KEY.replace("-", "").isalnum():
     sys.exit("HELIUS_API_KEY has unexpected characters")
 UPSTREAM_NAME = "helius" if HELIUS_KEY else "public"
