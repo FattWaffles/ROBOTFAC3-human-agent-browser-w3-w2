@@ -1,0 +1,21 @@
+# Deploys the relay that serves robotfac3.com. Nothing to install: Python standard library only.
+# In Render: New > Blueprint, pointed at this repo. Review the env vars before the first deploy.
+services:
+  - type: web
+    name: robotfac3
+    runtime: python
+    plan: free
+    buildCommand: python3 --version   # no dependencies to install
+    startCommand: python3 relay.py
+    healthCheckPath: /healthz
+    envVars:
+      # Every domain the relay answers on. A request carrying any other Host is refused (421).
+      # Leave this unset and the relay stays bound to 127.0.0.1 and will not serve the internet.
+      - key: RF3_PUBLIC_HOST
+        value: robotfac3.com,www.robotfac3.com,robotfac3.onrender.com
+      # Set this in the Render dashboard, never in git. Without it the free public endpoint is
+      # used, which rate-limits quickly and cannot resolve NFT-held .sns names.
+      - key: HELIUS_API_KEY
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.12.6"

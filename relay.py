@@ -10,7 +10,8 @@ What it does:
 What it refuses:
   * connection reuse: every response closes the connection (HTTP/1.0, Connection: close), so bytes left over from
     a rejected request can never be parsed as a second, forged request (request smuggling)
-  * any request whose Host is not localhost/127.0.0.1 (DNS-rebinding defence)
+  * any request whose Host is not the one it is serving: localhost/127.0.0.1, or the domains in
+    RF3_PUBLIC_HOST on a deployed relay (DNS-rebinding defence)
   * any POST that does not come from this page's own origin (other sites cannot use the relay)
   * any RPC method not on the allow-list below (there is no sendTransaction: Phantom sends, not RobotFac3)
 
@@ -25,10 +26,22 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-HOST = "127.0.0.1"
-PORT = int(os.environ.get("RF3_PORT", "5173"))
-ALLOWED_HOSTS = {"localhost:%d" % PORT, "127.0.0.1:%d" % PORT}
-ALLOWED_ORIGINS = {"http://" + h for h in ALLOWED_HOSTS}
+# Public deploy: name every domain the relay answers on, comma-separated, e.g.
+#   RF3_PUBLIC_HOST=robotfac3.com,www.robotfac3.com,robotfac3.onrender.com
+# Unset (the default) keeps the relay on this machine only, so a stray run is never exposed.
+PUBLIC_HOSTS = tuple(h.strip().lower() for h in os.environ.get("RF3_PUBLIC_HOST", "").split(",") if h.strip())
+PUBLIC = bool(PUBLIC_HOSTS)
+# Render and Fly hand the port over in PORT; RF3_PORT stays for local runs.
+PORT = int(os.environ.get("PORT") or os.environ.get("RF3_PORT") or "5173")
+HOST = "0.0.0.0" if PUBLIC else "127.0.0.1"  # every interface only when a public host is named
+if PUBLIC:
+    # Behind the host's TLS terminator the Host header carries the domain and no port, and the
+    # page's own origin is https. Anything else is still refused, so rebinding gains nothing.
+    ALLOWED_HOSTS = set(PUBLIC_HOSTS)
+    ALLOWED_ORIGINS = {"https://" + h for h in PUBLIC_HOSTS}
+else:
+    ALLOWED_HOSTS = {"localhost:%d" % PORT, "127.0.0.1:%d" % PORT}
+    ALLOWED_ORIGINS = {"http://" + h for h in ALLOWED_HOSTS}
 MAX_BODY = 256 * 1024
 
 RPC_METHODS = {
@@ -52,6 +65,8 @@ SECURITY_HEADERS = {
     "Cross-Origin-Opener-Policy": "same-origin",
     "Cache-Control": "no-store",
 }
+if PUBLIC:
+    SECURITY_HEADERS["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
 
 
 def read_env_local():
@@ -156,9 +171,11 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def host_ok(self):
-        return self.headers.get("Host", "") in ALLOWED_HOSTS
+        return self.headers.get("Host", "").strip().lower() in ALLOWED_HOSTS
 
     def do_GET(self):
+        if self.path == "/healthz":
+            return self.reply(200, {"ok": True})  # before the Host check: the platform probe sets its own Host
         if not self.host_ok():
             return self.reply(421, {"error": "unexpected Host"})
         if self.path == "/relay/info":
@@ -220,7 +237,10 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print("RobotFac3 relay on http://localhost:%d  (RPC upstream: %s)" % (PORT, UPSTREAM_NAME))
+    if PUBLIC:
+        print("RobotFac3 relay on %s:%d for %s  (RPC upstream: %s)" % (HOST, PORT, ", ".join(PUBLIC_HOSTS), UPSTREAM_NAME))
+    else:
+        print("RobotFac3 relay on http://localhost:%d  (RPC upstream: %s)" % (PORT, UPSTREAM_NAME))
     try:
         ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
     except KeyboardInterrupt:
