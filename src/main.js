@@ -167,6 +167,7 @@ function navigate(input, { silent } = {}) {
   if (input === "rf3://home") return renderHome();
   if (input === "rf3://trap") return renderTrap(silent);
   if (input === "rf3://networks") return renderNetworks();
+  if (input === "rf3://search") return renderSearchHome();
   if (d.kind === "sns") return renderName(input, silent);
   if (d.kind === "https") return renderWeb(/^https:\/\//i.test(input) ? input : `https://${input}`, silent);
   if (d.kind === "http") return void ($("view").innerHTML = note("Plain http is off", "RobotFac3 only opens https pages. Try the same address with https://"));
@@ -176,6 +177,7 @@ function navigate(input, { silent } = {}) {
 }
 const note = (title, text) => `<div class="center-note"><h2>${esc(title)}</h2><p>${esc(text)}</p></div>`;
 function bindGo() { $("view").querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => navigate(b.dataset.go))); }
+document.querySelectorAll("[data-nav]").forEach((b) => b.addEventListener("click", () => navigate(b.dataset.nav)));
 
 // ---------- Search ----------
 // The index ships with the app. The query is matched here, on this computer; it is never sent anywhere.
@@ -183,10 +185,69 @@ let searchIndex = null;
 function loadSearchIndex() {
   searchIndex ??= fetch("data/projects.json")
     .then((r) => { if (!r.ok) throw new Error("missing"); return r.json(); })
-    .then((d) => ({ built: d.built, sources: d.sources || [], items: prepare(d.projects) }));
+    .then((d) => {
+      const items = prepare(d.projects);
+      const counts = {};
+      for (const p of items) for (const c of p.chains) counts[c] = (counts[c] || 0) + 1;
+      return { built: d.built, sources: d.sources || [], items, counts };
+    });
   return searchIndex;
 }
-async function renderSearch(query, chain = "all") {
+const SEARCH_HINTS = ["lending", "swap", "nft", "games", "bridge", "stake", "perps"];
+const SEARCH_PAGE_SIZE = 50;
+
+// One search box, two sizes: big on the search page, compact above results. The chain picker is part of it.
+function searchForm(idx, query = "", chain = "all", compact = false) {
+  const opts = ["all", ...Object.keys(CHAIN_LABELS)].map((c) => {
+    const n = idx && c !== "all" ? ` (${(idx.counts[c] || 0).toLocaleString()})` : "";
+    return `<option value="${c}"${c === chain ? " selected" : ""}>${c === "all" ? "All chains" : esc(CHAIN_LABELS[c])}${n}</option>`;
+  }).join("");
+  return `<form id="searchForm" class="g-form${compact ? " g-compact" : ""}">
+    <div class="g-box">
+      <span class="g-glass" aria-hidden="true">⌕</span>
+      <input id="searchQ" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Search Web3 projects" value="${esc(query)}" aria-label="Search Web3 projects" />
+      <select id="searchChain" aria-label="Which blockchain to search">${opts}</select>
+      ${compact ? `<button class="btn btn-red btn-small">Search</button>` : ""}
+    </div>
+    ${compact ? "" : `<div class="g-actions"><button class="btn btn-red">Search</button></div>`}
+  </form>`;
+}
+function bindSearchForm() {
+  guardPaste($("searchQ"), "search box");
+  $("searchChain").addEventListener("change", () => { if ($("searchQ").value.trim()) $("searchForm").requestSubmit(); });
+  $("searchForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const q = $("searchQ").value.trim();
+    if (!q || $("searchQ").readOnly) return;
+    if (!(await passesLeakCheck(q, "search box"))) { $("searchQ").value = ""; return; }
+    state.searchChain = $("searchChain").value;
+    navigate(q); // a name or an address typed here goes where the address bar would take it
+  });
+}
+
+// rf3://search: the search page itself. Logo, one box, a chain picker.
+async function renderSearchHome() {
+  let idx = null;
+  try { idx = await loadSearchIndex(); } catch { searchIndex = null; }
+  if (state.page !== "rf3://search") return;
+  $("view").innerHTML = `
+  <section class="g-home">
+    <img src="public/logo.png" alt="RobotFac3" class="g-logo" />
+    <p class="g-tagline">Find Web3 projects on any Colosseum track chain.</p>
+    ${searchForm(idx, "", state.searchChain || "all")}
+    <div class="search-chips g-hints">${SEARCH_HINTS.map((h) => `<button class="chip chip-muted" data-hint="${h}">${h}</button>`).join("")}</div>
+    <p class="muted search-note">${idx
+      ? `${idx.items.length.toLocaleString()} projects · index built ${esc(idx.built)} · `
+      : "Search index missing. Build it with: python3 tools/build_index.py · "}Private: the search runs on your computer and the query never leaves it.</p>
+  </section>`;
+  bindSearchForm();
+  $("view").querySelectorAll("[data-hint]").forEach((b) => b.addEventListener("click", () => { $("searchQ").value = b.dataset.hint; $("searchForm").requestSubmit(); }));
+  $("searchQ").focus();
+}
+
+// Results for a query typed in the address bar or the search box.
+async function renderSearch(query, chain = state.searchChain || "all") {
+  state.searchChain = chain;
   $("view").innerHTML = `<section class="page"><p class="mono muted">Searching…</p></section>`;
   let idx;
   try { idx = await loadSearchIndex(); } catch {
@@ -194,7 +255,8 @@ async function renderSearch(query, chain = "all") {
     return void ($("view").innerHTML = note("Search index missing", "Build it with: python3 tools/build_index.py"));
   }
   if (state.page !== query) return;
-  const results = searchProjects(idx.items, query, chain);
+  const all = searchProjects(idx.items, query, chain, 1000);
+  const results = all.slice(0, SEARCH_PAGE_SIZE);
   const chips = ["all", ...Object.keys(CHAIN_LABELS)].map((c) =>
     `<button class="chip ${c === chain ? "chip-solid" : "chip-muted"}" data-chain="${c}">${c === "all" ? "All chains" : esc(CHAIN_LABELS[c])}</button>`).join("");
   const row = (p) => `<li><button class="result" data-url="${esc(p.url)}">
@@ -203,13 +265,17 @@ async function renderSearch(query, chain = "all") {
       ${p.description ? `<span>${esc(p.description)}</span>` : ""}
       <small>${esc(p.category)} · ${p.chains.map((c) => esc(CHAIN_LABELS[c] || c)).join(" · ")}</small>
     </button></li>`;
+  const where = chain !== "all" ? ` on ${esc(CHAIN_LABELS[chain])}` : "";
+  const count = all.length === 0 ? "No results" : all.length > results.length ? `Top ${results.length} of ${all.length.toLocaleString()} results` : `${all.length} result${all.length === 1 ? "" : "s"}`;
   $("view").innerHTML = `
-  <section class="page">
-    <p class="eyebrow">Search · ${idx.items.length.toLocaleString()} projects · index ${esc(idx.built)}</p>
+  <section class="page g-results">
+    ${searchForm(idx, query, chain, true)}
     <div class="search-chips">${chips}</div>
-    <p class="muted search-note">Private: this search ran on your computer. Results come from ${idx.sources.map((s) => esc(s.name)).join(", ")} and aren't verified yet. Check the address before you connect a wallet.</p>
-    <ol class="results">${results.map(row).join("") || `<li class="muted">No projects match “${esc(query)}”${chain !== "all" ? ` on ${esc(CHAIN_LABELS[chain])}` : ""}.</li>`}</ol>
+    <p class="muted search-note">${count} for “${esc(query)}”${where} · ${idx.items.length.toLocaleString()} projects indexed ${esc(idx.built)} from ${idx.sources.map((s) => esc(s.name)).join(", ")}.
+      Private: this search ran on your computer. Results aren't verified yet, so check the address before you connect a wallet.</p>
+    <ol class="results">${results.map(row).join("") || `<li class="muted">Try fewer words, or pick another chain.</li>`}</ol>
   </section>`;
+  bindSearchForm();
   $("view").querySelectorAll("[data-chain]").forEach((b) => b.addEventListener("click", () => renderSearch(query, b.dataset.chain)));
   $("view").querySelectorAll("[data-url]").forEach((b) => b.addEventListener("click", () => { const u = safeUrl(b.dataset.url); if (u) navigate(u); }));
 }
@@ -259,7 +325,7 @@ function renderHome() {
       ${tile("Poisoned page", "A page with hidden orders for AI agents", 'data-go="rf3://trap"')}
       ${tile("Leak test", "Paste a seed phrase into the address bar", 'data-demo="leak"')}
       ${tile("Networks", "Live read links to every Colosseum track chain", 'data-go="rf3://networks"')}
-      ${tile("Search Web3", "Type anything in the address bar. Try: lending", 'data-go="lending"')}
+      ${tile("Search Web3", "Find projects on any Colosseum track chain", 'data-go="rf3://search"')}
     </div>
     <h3 class="section-title">Solana directory</h3>
     <div class="grid">

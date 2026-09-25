@@ -23,6 +23,16 @@ Without a key the relay uses the free public endpoint, which rate-limits quickly
 - Zcash isn't connected: there's no public JSON-RPC endpoint.
 - Open `rf3://networks` (the Networks tile on the home page) to see every chain's live block.
 
+## Search (Web3 projects, on-device)
+`rf3://search` (the Search link in the site nav, or the Search Web3 tile) is one box with a chain picker: type what you want, choose "All chains" or one track chain, and get ranked projects. Typing anything that isn't a name or an address into the address bar lands on the same results page.
+- The index is `data/projects.json`, built by `python3 tools/build_index.py` from DefiLlama's public protocol list (1,940 projects on 2026-09-23). Rebuild it weekly. Ranking is text match first, size only breaks ties; there is no paid placement.
+- The query is matched in the page (`src/search.js`) and never leaves the computer. The search box gets the same leak check as the address bar.
+- Every result URL is checked twice (at ingest and again before it is shown or opened): plain https, ASCII host, no login part, no port, no punycode. A result opens like any other site: in the sandboxed frame on the web, in its own window on desktop.
+- Results are not verified yet (see `mdfiles/web3-search-spec.md` for the reviewer and scam-report plan). The page says so.
+
+## Site nav (web only)
+The bar above the browser chrome is the robotfac3.com site: logo, Search, GitHub, Contact and the desktop download button. It is hidden in the desktop app. `Contact` is a placeholder `mailto:hello@robotfac3.com`; change it in `index.html` before deploying. Email capture on download is planned, not built.
+
 ## Deploy it (robotfac3.com)
 The relay serves the site and proxies RPC, so this needs a host that runs a process, not a static CDN.
 `render.yaml` is a Render blueprint; any host that sets `PORT` works the same way.
@@ -85,6 +95,9 @@ Node is only needed for tests, and the tests import nothing but Node built-ins.
 | `src/solana/rpc.js` | JSON-RPC over `fetch` to the relay |
 | `src/solana/phantom.js` | Phantom's injected provider, using the documented `request()` form. No SDK |
 | `src/security.js` | Leak check, injection detector (heuristic, telemetry only), the strict payment-sentence grammar, agent payment policy |
+| `src/search.js` | On-device project search: URL safety check, index preparation, ranking. Pure functions, tested in Node |
+| `tools/build_index.py`, `data/projects.json` | Weekly index build (stdlib only) and the index it writes. Third-party text; the page escapes it |
+| `chains.json` | EVM chain registry read by `relay.py` and the Rust core: chain IDs, endpoints, read-only method allow-list |
 | `src/main.js`, `index.html`, `styles.css` | The UI. Hand-written CSS, system fonts |
 | `src/vendor/bip39-english.txt` | The BIP39 English word list, unmodified from `bitcoin/bips`. SHA-256 `2f5eed53a4727b4bf8880d8f3f199efc90e58503646d9ff8eff3a2ed3b24dbda` (a test checks it) |
 

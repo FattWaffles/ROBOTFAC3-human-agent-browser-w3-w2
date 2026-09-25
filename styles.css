@@ -26,8 +26,12 @@ h1, h2, h3, p { margin: 0; }
 .site-links { margin-left: auto; display: flex; align-items: center; gap: 12px; font-size: 14px; }
 .site-links > a:not(.btn) { color: var(--ash); text-decoration: none; }
 .site-links > a:not(.btn):hover { color: var(--bone); }
-@media (max-width: 640px) { .site-brand .chip { display: none; } }
+.site-logo { height: 28px; width: auto; }
+.site-link { background: none; border: 0; padding: 0; color: var(--ash); font-size: 14px; }
+.site-link:hover { color: var(--bone); }
+@media (max-width: 640px) { .site-brand .chip, .site-links > a:not(.btn) { display: none; } }
 .desktop .site-nav { display: none; }
+html:not(.desktop) .chrome .logo { display: none; } /* on the web the site nav carries the logo */
 .chrome { background: var(--ink-2); border-bottom: 1px solid var(--ink-3); }
 .chrome-top { display: flex; align-items: center; gap: 12px; padding: 8px 12px 0; }
 .logo { height: 36px; }
@@ -91,6 +95,25 @@ h1, h2, h3, p { margin: 0; }
 .search-chips { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 6px; }
 .search-chips .chip { border: 0; cursor: pointer; font-size: 12px; padding: 4px 10px; }
 .search-note { margin-top: 12px; font-size: 13px; }
+
+/* search page (one box, a chain picker, results below) */
+.g-home { max-width: 640px; margin: 8vh auto 0; display: flex; flex-direction: column; align-items: center; text-align: center; }
+.g-logo { height: 72px; width: auto; }
+.g-tagline { margin-top: 12px; color: var(--ash); }
+.g-form { width: 100%; margin-top: 24px; }
+.g-box { display: flex; align-items: center; gap: 10px; background: var(--ink-2); border: 1px solid var(--ink-3); border-radius: 999px; padding: 10px 18px; }
+.g-box:focus-within { border-color: var(--blood); }
+.g-glass { color: var(--ash); font-size: 20px; line-height: 1; }
+.g-box input { flex: 1; min-width: 0; background: transparent; border: 0; outline: 0; font-size: 16px; }
+.g-box input::placeholder { color: var(--ash); }
+.g-box select { max-width: 45%; background: var(--ink); color: var(--bone); border: 1px solid var(--ink-3); border-radius: 999px; padding: 4px 10px; font-size: 13px; outline: 0; cursor: pointer; }
+.g-box select:focus { border-color: var(--blood); }
+.g-actions { margin-top: 20px; display: flex; justify-content: center; }
+.g-hints { justify-content: center; margin-top: 20px; }
+.g-compact { margin: 0 0 12px; }
+.g-compact .g-box { padding: 6px 8px 6px 16px; }
+.g-results .search-chips { margin-top: 8px; }
+@media (max-width: 640px) { .g-box { flex-wrap: wrap; border-radius: 16px; } .g-box select { max-width: 100%; } }
 .results { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .result { display: block; width: 100%; text-align: left; background: none; border: 1px solid transparent; border-radius: 8px; padding: 12px 14px; }
 .result:hover { border-color: var(--ink-3); background: var(--ink-2); }
