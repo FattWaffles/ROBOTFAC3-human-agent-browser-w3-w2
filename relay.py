@@ -5,6 +5,7 @@ What it does:
   * serves the static prototype on http://localhost:5173 (allow-listed files only)
   * forwards Solana JSON-RPC from the page to the network WITHOUT the browser's Origin header
     (the public endpoint answers 403 to any request that carries one)
+  * forwards read-only EVM JSON-RPC to the track chains in chains.json, after each upstream proves its chain ID
   * keeps the RPC API key out of the page: it is read from .env.local and never sent to the browser
 
 What it refuses:
@@ -14,13 +15,20 @@ What it refuses:
     RF3_PUBLIC_HOST on a deployed relay (DNS-rebinding defence)
   * any POST that does not come from this page's own origin (other sites cannot use the relay)
   * any RPC method not on the allow-list below (there is no sendTransaction: Phantom sends, not RobotFac3)
+  * upstream redirects (never followed), upstream answers over MAX_RESPONSE, clients that go quiet mid-request
+  * more than a bounded rate of upstream calls: the relay is a door to the RPC key, so it is a slow one
 
 In the desktop build the Rust core does this job.
 """
+import email.utils
+import http.client
 import json
 import os
 import sys
+import threading
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -48,7 +56,9 @@ if PUBLIC:
 else:
     ALLOWED_HOSTS = {"localhost:%d" % PORT, "127.0.0.1:%d" % PORT}
     ALLOWED_ORIGINS = {"http://" + h for h in ALLOWED_HOSTS}
-MAX_BODY = 256 * 1024
+MAX_BODY = 256 * 1024           # a request from the page
+MAX_RESPONSE = 4 * 1024 * 1024  # an answer from upstream; the page's largest legitimate one is well under 100 KB
+UPSTREAM_TIMEOUT = 20           # per socket operation, so a whole call is bounded by this times a few
 
 RPC_METHODS = {
     "getAccountInfo", "getBalance", "getGenesisHash", "getLatestBlockhash", "getMultipleAccounts",
@@ -69,7 +79,6 @@ SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
     "Cross-Origin-Opener-Policy": "same-origin",
-    "Cache-Control": "no-store",
 }
 if PUBLIC:
     SECURITY_HEADERS["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
@@ -87,21 +96,74 @@ def read_env_local():
     return env
 
 
-HELIUS_KEY = (os.environ.get("HELIUS_API_KEY") or read_env_local().get("HELIUS_API_KEY", "")).strip()
+_ENV_LOCAL = read_env_local()
+HELIUS_KEY = (os.environ.get("HELIUS_API_KEY") or _ENV_LOCAL.get("HELIUS_API_KEY", "")).strip()
 if HELIUS_KEY and not HELIUS_KEY.replace("-", "").isalnum():
     sys.exit("HELIUS_API_KEY has unexpected characters")
 UPSTREAM_NAME = "helius" if HELIUS_KEY else "public"
 UPSTREAM_URL = ("https://mainnet.helius-rpc.com/?api-key=" + HELIUS_KEY) if HELIUS_KEY else "https://api.mainnet-beta.solana.com"
 
 # EVM track chains, read-only. Same registry as the Rust core. No eth_sendRawTransaction: the wallet sends, not RobotFac3.
-_CHAINS = json.loads((Path(__file__).resolve().parent / "chains.json").read_text())
+_CHAINS = json.loads((ROOT / "chains.json").read_text())
 EVM_METHODS = set(_CHAINS["evmMethods"])
-EVM_CHAINS = {}
+EVM_CHAINS, OVERRIDDEN = {}, []
 for _c in _CHAINS["evm"]:
-    _override = os.environ.get(_c["id"].upper() + "_RPC_URL", "")
-    EVM_CHAINS[_c["id"]] = {"id": _c["id"], "name": _c["name"], "chainId": _c["chainId"],
-                            "url": _override if _override.startswith("https://") else _c["url"]}
+    _key = _c["id"].upper() + "_RPC_URL"
+    _override = (os.environ.get(_key) or _ENV_LOCAL.get(_key, "")).strip().strip("\"'")
+    if _override:
+        # Fail loudly, like a bad HELIUS_API_KEY: quietly falling back to the public endpoint would look like it worked.
+        if not _override.startswith("https://") or not urllib.parse.urlsplit(_override).hostname:
+            sys.exit("%s must be an https:// URL with a host" % _key)
+        OVERRIDDEN.append(_c["id"])
+    EVM_CHAINS[_c["id"]] = {"id": _c["id"], "name": _c["name"], "chainId": _c["chainId"], "url": _override or _c["url"]}
 VERIFIED_CHAINS = set()
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Any 3xx surfaces as an HTTPError. Following it would let an upstream send the call to another host or scheme."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+# The default ProxyHandler stays: https goes through CONNECT with TLS end to end, and dropping it would only
+# break people behind a corporate proxy.
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+class UpstreamError(Exception):
+    """Something other than an answer came back. The message reads after the chain's name."""
+
+
+def read_capped(response):
+    """The body, or None when it is over MAX_RESPONSE (refused up front from Content-Length, or while reading)."""
+    declared = (response.headers.get("Content-Length") or "").strip()
+    if declared.isdigit() and int(declared) > MAX_RESPONSE:
+        return None
+    data = response.read(MAX_RESPONSE + 1)
+    return None if len(data) > MAX_RESPONSE else data
+
+
+def upstream_post(url, body):
+    """One re-serialized call to an upstream. Returns (status, bytes); raises UpstreamError for anything else."""
+    request = urllib.request.Request(url, data=body, method="POST",
+                                     headers={"Content-Type": "application/json", "User-Agent": "robotfac3-relay/0.2"})
+    try:
+        with _OPENER.open(request, timeout=UPSTREAM_TIMEOUT) as upstream:
+            status, data = upstream.status, read_capped(upstream)
+    except urllib.error.HTTPError as err:
+        if 300 <= err.code < 400:
+            raise UpstreamError("tried to redirect the call, which the relay never follows")
+        try:
+            data = read_capped(err)
+        except (OSError, http.client.HTTPException):
+            data = b""
+        status = err.code
+    except (urllib.error.URLError, http.client.HTTPException, OSError):
+        raise UpstreamError("could not be reached")
+    if data is None:
+        raise UpstreamError("sent an answer over the relay's size limit")
+    return status, data
 
 
 def verify_chain(chain):
@@ -109,16 +171,41 @@ def verify_chain(chain):
     if chain["id"] in VERIFIED_CHAINS:
         return True
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "eth_chainId", "params": []}).encode()
-    request = urllib.request.Request(chain["url"], data=body, method="POST",
-                                     headers={"Content-Type": "application/json", "User-Agent": "robotfac3-relay/0.2"})
     try:
-        with urllib.request.urlopen(request, timeout=20) as upstream:
-            ok = int(json.loads(upstream.read())["result"], 16) == chain["chainId"]
+        status, data = upstream_post(chain["url"], body)
+        result = json.loads(data)["result"]
+        ok = status == 200 and isinstance(result, str) and len(result) <= 20 and int(result, 16) == chain["chainId"]
     except Exception:
         return False
     if ok:
         VERIFIED_CHAINS.add(chain["id"])
     return ok
+
+
+# ---- Throttle. The page's own origin check keeps other websites out, but any program can forge those headers, so
+# on a public host the relay is an open door to the RPC key's quota. Bound how fast that door can be used.
+_THROTTLE = threading.Lock()
+_GLOBAL = [50.0, time.monotonic()]              # all clients together: burst 50, then 5 calls/s
+_CLIENTS = {}                                   # per client: burst 30, then 3 calls/s
+UPSTREAM_SLOTS = threading.BoundedSemaphore(32)  # upstream calls in flight; beyond that, 503 rather than a thread each
+
+
+def _take(bucket, rate, burst):
+    now = time.monotonic()
+    bucket[0] = min(burst, bucket[0] + (now - bucket[1]) * rate)
+    bucket[1] = now
+    if bucket[0] < 1:
+        return False
+    bucket[0] -= 1
+    return True
+
+
+def throttled(client):
+    with _THROTTLE:
+        if len(_CLIENTS) > 10000:
+            _CLIENTS.clear()  # forget everyone rather than grow without bound
+        bucket = _CLIENTS.setdefault(client, [30.0, time.monotonic()])
+        return not (_take(bucket, 3.0, 30) and _take(_GLOBAL, 5.0, 50))
 
 
 def resolve_static(url_path):
@@ -138,7 +225,7 @@ def resolve_static(url_path):
         return None
     try:
         resolved = candidate.resolve(strict=True)
-    except (FileNotFoundError, RuntimeError):
+    except (OSError, ValueError, RuntimeError):  # missing, not a directory, name too long, NUL byte, symlink loop: all 404
         return None
     if ROOT not in resolved.parents or not resolved.is_file() or suffix not in MIME:
         return None
@@ -150,22 +237,30 @@ class Handler(BaseHTTPRequestHandler):
     sys_version = ""
     # HTTP/1.0 on purpose: http.server only honours keep-alive for 1.1, and this relay must never reuse a connection.
     protocol_version = "HTTP/1.0"
+    # Deadline for every socket operation (request line, headers, the body read, the response write). An idle or
+    # half-sent request then frees its thread instead of holding it until the client goes away; http.server catches
+    # the timeout in handle_one_request and closes the connection silently.
+    timeout = 15
 
     def log_message(self, fmt, *args):
         pass  # request bodies and URLs are never logged
 
-    def reply(self, status, body, content_type="application/json"):
+    def reply(self, status, body, content_type="application/json", cache="no-store", modified=None, extra=None):
         if isinstance(body, (dict, list)):
             body = json.dumps(body).encode()
         self.close_connection = True
         self.send_response(status)
         self.send_header("Connection", "close")
         self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        for name, value in SECURITY_HEADERS.items():
+        if status != 304:
+            self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", cache)
+        if modified is not None:
+            self.send_header("Last-Modified", email.utils.formatdate(modified, usegmt=True))
+        for name, value in list(SECURITY_HEADERS.items()) + list((extra or {}).items()):
             self.send_header(name, value)
         self.end_headers()
-        if self.command != "HEAD":
+        if self.command != "HEAD" and status != 304:
             self.wfile.write(body)
 
     def send_error(self, code, message=None, explain=None):
@@ -179,6 +274,15 @@ class Handler(BaseHTTPRequestHandler):
     def host_ok(self):
         return self.headers.get("Host", "").strip().lower() in ALLOWED_HOSTS
 
+    def client_ip(self):
+        # Behind the host's proxy the socket peer is the proxy; it appends the real client as the LAST hop of
+        # X-Forwarded-For (earlier hops are whatever the client claimed). Locally the socket peer is the client.
+        if PUBLIC:
+            last = self.headers.get("X-Forwarded-For", "").rsplit(",", 1)[-1].strip()
+            if last:
+                return last
+        return self.client_address[0]
+
     def do_GET(self):
         if self.path == "/healthz":
             return self.reply(200, {"ok": True})  # before the Host check: the platform probe sets its own Host
@@ -190,7 +294,20 @@ class Handler(BaseHTTPRequestHandler):
         target = resolve_static(self.path)
         if target is None:
             return self.reply(404, {"error": "not found"})
-        self.reply(200, target.read_bytes(), MIME[target.suffix.lower()])
+        # Images, the word list and the search index change rarely: cache them for an hour. The page's own files are
+        # revalidated on every visit (one small 304 when unchanged), so an edit shows up immediately.
+        durable = target.parent.name in ("public", "data", "vendor")
+        mtime = int(target.stat().st_mtime)
+        mime = MIME[target.suffix.lower()]
+        cache = "public, max-age=3600" if durable else "no-cache"
+        since = self.headers.get("If-Modified-Since")
+        if since:
+            try:
+                if int(email.utils.parsedate_to_datetime(since).timestamp()) >= mtime:
+                    return self.reply(304, b"", mime, cache=cache, modified=mtime)
+            except (TypeError, ValueError, OverflowError):
+                pass
+        self.reply(200, target.read_bytes(), mime, cache=cache, modified=mtime)
 
     do_HEAD = do_GET
 
@@ -226,27 +343,46 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(400, {"error": "invalid JSON"})
         if not isinstance(call, dict) or not isinstance(call.get("method"), str) or call["method"] not in methods:
             return self.reply(403, {"jsonrpc": "2.0", "id": None, "error": {"code": -32601, "message": "method not allowed by the relay"}})
+        # The id and params are echoed upstream after re-serialization. Keep them small and simply shaped, so the
+        # relay never spends real CPU on a hostile body (Python 3.9 has no limit on int-to-string conversion).
+        call_id = call.get("id", 1)
+        id_ok = call_id is None or (isinstance(call_id, str) and len(call_id) <= 64) \
+            or (isinstance(call_id, int) and not isinstance(call_id, bool) and abs(call_id) < 2 ** 53)
+        params = call.get("params", [])
+        if not id_ok or not isinstance(params, list):
+            return self.reply(400, {"error": "id must be a short string or number and params a list"})
 
         # Re-serialize so only a well-formed single call goes upstream; no browser headers are forwarded.
-        body = json.dumps({"jsonrpc": "2.0", "id": call.get("id", 1), "method": call["method"], "params": call.get("params", [])}).encode()
-        if chain is not None and not verify_chain(chain):
-            return self.reply(502, {"jsonrpc": "2.0", "id": call.get("id"), "error": {"code": -32000, "message": "couldn't confirm the upstream is %s, so the relay won't use it" % chain["name"]}})
-        request = urllib.request.Request(upstream_url, data=body, method="POST",
-                                         headers={"Content-Type": "application/json", "User-Agent": "robotfac3-relay/0.2"})
+        body = json.dumps({"jsonrpc": "2.0", "id": call_id, "method": call["method"], "params": params}).encode()
+        what = chain["name"] if chain is not None else "Solana"
+        error = lambda code, message: {"jsonrpc": "2.0", "id": call_id, "error": {"code": code, "message": message}}
+        if throttled(self.client_ip()):
+            return self.reply(429, error(-32000, "too many requests through the relay; wait a second and retry"), extra={"Retry-After": "1"})
+        if not UPSTREAM_SLOTS.acquire(blocking=False):
+            return self.reply(503, error(-32000, "the relay is busy; try again in a moment"), extra={"Retry-After": "2"})
         try:
-            with urllib.request.urlopen(request, timeout=20) as upstream:
-                return self.reply(upstream.status, upstream.read())
-        except urllib.error.HTTPError as err:
-            return self.reply(err.code, err.read() or json.dumps({"error": "upstream HTTP %d" % err.code}).encode())
-        except (urllib.error.URLError, TimeoutError, OSError):
-            return self.reply(502, {"jsonrpc": "2.0", "id": call.get("id"), "error": {"code": -32000, "message": "relay could not reach Solana"}})
+            if chain is not None and not verify_chain(chain):
+                return self.reply(502, error(-32000, "couldn't confirm the upstream is %s, so the relay won't use it" % what))
+            try:
+                status, data = upstream_post(upstream_url, body)
+            except UpstreamError as err:
+                return self.reply(502, error(-32000, "%s %s" % (what, err)))
+        finally:
+            UPSTREAM_SLOTS.release()
+        # Only JSON goes back to the page. An upstream's HTML error page must not be served as application/json.
+        try:
+            json.loads(data)
+        except ValueError:
+            data = error(-32000, "%s answered with something that isn't JSON (HTTP %d)" % (what, status))
+        return self.reply(status, data)
 
 
 if __name__ == "__main__":
+    overrides = (" · overrides: " + ", ".join(OVERRIDDEN)) if OVERRIDDEN else ""  # ids only, never the URLs (they may carry keys)
     if PUBLIC:
-        print("RobotFac3 relay on %s:%d for %s  (RPC upstream: %s)" % (HOST, PORT, ", ".join(PUBLIC_HOSTS), UPSTREAM_NAME))
+        print("RobotFac3 relay on %s:%d for %s  (RPC upstream: %s%s)" % (HOST, PORT, ", ".join(PUBLIC_HOSTS), UPSTREAM_NAME, overrides))
     else:
-        print("RobotFac3 relay on http://localhost:%d  (RPC upstream: %s)" % (PORT, UPSTREAM_NAME))
+        print("RobotFac3 relay on http://localhost:%d  (RPC upstream: %s%s)" % (PORT, UPSTREAM_NAME, overrides))
     try:
         ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
     except KeyboardInterrupt:

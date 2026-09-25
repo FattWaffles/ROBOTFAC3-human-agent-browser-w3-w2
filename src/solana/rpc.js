@@ -20,6 +20,7 @@ export class RpcError extends Error {
 export async function rpc(method, params = [], chain = "solana") {
   // A random id per call, checked on the way back, so a stray or replayed response can't be taken for this one.
   const id = crypto.getRandomValues(new Uint32Array(1))[0];
+  const where = chain === "solana" ? "Solana RPC" : `${chain} RPC`;
   let res;
   try {
     res = desktop ? await desktopFetch(id, method, params, chain) : await fetch(chain === "solana" ? endpoint : `/rpc/evm/${encodeURIComponent(chain)}`, {
@@ -28,9 +29,9 @@ export async function rpc(method, params = [], chain = "solana") {
       body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
     });
   } catch (err) {
-    throw new RpcError(desktop ? String(err || "The desktop app couldn't reach Solana.") : "Can't reach the relay. Is relay.py running?", "network");
+    throw new RpcError(desktop ? String(err || `The desktop app couldn't reach ${where}.`) : `Can't reach RobotFac3's relay for ${where}. Check your connection (running locally? make sure relay.py is up).`, "network");
   }
-  if (res.status === 429) throw new RpcError("Solana RPC is rate-limiting. Wait a few seconds and retry.", 429);
+  if (res.status === 429) throw new RpcError(`${where} is rate-limiting. Wait a few seconds and retry.`, 429);
   let body;
   try { body = await res.json(); } catch { throw new RpcError(`RPC returned HTTP ${res.status}`, res.status); }
   if (body?.error) throw new RpcError(body.error.message || "RPC error", body.error.code);

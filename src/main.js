@@ -80,7 +80,13 @@ function setMode(mode) {
   document.querySelectorAll(".mode-btn").forEach((b) => b.classList.toggle("on", b.dataset.mode === mode));
   log("info", mode === "agent" ? "Agent session started" : "Back to human browsing",
     mode === "agent" ? `Spend limit ${getCap()} SOL · a human approves every signature` : "");
-  if (state.page) navigate(state.page, { silent: true });
+  redrawForMode();
+}
+// Only the trap page and a name page draw anything that depends on the mode or the spend cap. Redrawing anything
+// else (the Networks page, a name lookup) would re-query the chain for no reason.
+function redrawForMode() {
+  if (state.page === "rf3://trap") return renderTrap(true);
+  if (state.page && detect(state.page).kind === "sns") return renderName(state.page, true);
 }
 document.querySelectorAll(".mode-btn").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
 
@@ -289,14 +295,23 @@ function renderNetworks() {
     <h1 class="hero">Every Colosseum track chain, read live.</h1>
     <p class="lede">Read-only. RobotFac3 reads these chains through its own relay, which first checks each one is the chain it claims to be. It can't send on any of them. Sending stays with your wallet.</p>
     <div class="grid">
-      ${chains.map((c) => `<div class="card tile"><b>${esc(c.name)}</b><output id="net-${esc(c.id)}" class="chip chip-muted">checking…</output><small>${c.chainId ? `chain ID ${c.chainId}` : "mainnet-beta"}</small></div>`).join("")}
+      ${chains.map((c) => `<div class="card tile"><b>${esc(c.name)}</b><output id="net-${esc(c.id)}" class="chip chip-muted">checking…</output><small>${c.chainId ? `chain ID ${esc(c.chainId)}` : "mainnet-beta"}</small></div>`).join("")}
       <div class="card tile"><b>Zcash</b><output class="chip chip-warn">not connected</output><small>No public JSON-RPC endpoint. Needs a Zcash node.</small></div>
     </div>
   </section>`;
   chains.forEach(async (c) => {
     let text, cls = "chip chip-ok", title = "";
+    // An RPC answer is untrusted: anything that isn't the exact shape asked for paints the tile red, never green.
     try {
-      text = c.id === "solana" ? `slot ${(await rpc("getSlot")).toLocaleString()}` : `block ${parseInt(await rpc("eth_blockNumber", [], c.id), 16).toLocaleString()}`;
+      if (c.id === "solana") {
+        const slot = await rpc("getSlot");
+        if (!Number.isSafeInteger(slot) || slot < 0) throw new Error("Solana sent a slot RobotFac3 can't read");
+        text = `slot ${slot.toLocaleString()}`;
+      } else {
+        const hex = await rpc("eth_blockNumber", [], c.id);
+        if (typeof hex !== "string" || !/^0x[0-9a-fA-F]{1,13}$/.test(hex)) throw new Error(`${c.name} sent a block number RobotFac3 can't read`);
+        text = `block ${parseInt(hex, 16).toLocaleString()}`;
+      }
     } catch (err) { text = "unreachable"; cls = "chip chip-red"; title = err.message; }
     const el = state.page === "rf3://networks" && $(`net-${c.id}`);
     if (el) { el.textContent = text; el.className = cls; el.title = title; }
@@ -343,10 +358,9 @@ function renderHome() {
 // ---------- Name page ----------
 async function renderName(input, silent) {
   $("view").innerHTML = `<div class="center-note"><p class="mono">looking up ${esc(input.toLowerCase())} on Solana…</p></div>`;
-  let info, lamports;
+  let info, lamports = null;
   try {
     info = await resolveName(input);
-    lamports = (await rpc("getBalance", [info.target, { commitment: "confirmed" }])).value;
   } catch (e) {
     if (state.page !== input) return; // the user moved on while we were resolving
     log("warn", `Couldn't resolve ${input}`, e.message);
@@ -357,6 +371,13 @@ async function renderName(input, silent) {
   }
   if (state.page !== input) return;
   if (!silent) log("ok", `Resolved ${info.display}`, `${info.via} → ${info.target}`);
+  // The balance is decoration: a bad or missing answer shows as "—" and never hides where sends would go.
+  try {
+    const bal = await rpc("getBalance", [info.target, { commitment: "confirmed" }]);
+    if (!Number.isSafeInteger(bal?.value) || bal.value < 0) throw new Error("Solana sent a balance RobotFac3 can't read");
+    lamports = bal.value;
+  } catch (e) { if (!silent) log("warn", `Couldn't read the balance of ${info.display}`, e.message); }
+  if (state.page !== input) return;
 
   const agent = state.mode === "agent";
   const typedSol = info.typedTld === ".sol";
@@ -370,7 +391,7 @@ async function renderName(input, silent) {
           <span class="chip chip-sns">SNS · read from chain at slot ${esc(info.slot)}</span>
           <h1 class="name-title">${esc(info.display)}</h1>
         </div>
-        <div class="balance"><small>Balance</small><b>${esc(Number(lamportsToSol(lamports)).toLocaleString(undefined, { maximumFractionDigits: 3 }))} SOL</b></div>
+        <div class="balance"><small>Balance</small><b>${lamports === null ? "—" : esc(Number(lamportsToSol(lamports)).toLocaleString(undefined, { maximumFractionDigits: 3 })) + " SOL"}</b></div>
       </div>
       <dl class="facts">
         <dt>Sends go to</dt><dd>${esc(info.target)}</dd>
@@ -545,8 +566,15 @@ async function reviewPayment({ to, label, amount, source, typedSol }) {
       if (verdict.verdict === "block") throw new Error(verdict.reason);
       overLimit = verdict.verdict === "escalate";
     }
-    // The name was resolved when its page was drawn, which may be a while ago. Ask the chain again.
-    const fresh = await resolveName(label);
+    // The name was resolved when its page was drawn, which may be a while ago. Ask the chain again. The blockhash
+    // and the "before" snapshot don't depend on that answer (watch comes from from/to, both known here), so the
+    // three reads go out together. Nothing is built until the name checks out.
+    const watch = from === to ? [from] : [from, to];
+    const [fresh, { value: latest }, before] = await Promise.all([
+      resolveName(label),
+      rpc("getLatestBlockhash", [{ commitment: "confirmed" }]),
+      rpc("getMultipleAccounts", [watch, { encoding: "base64", commitment: "confirmed" }]),
+    ]);
     if (superseded()) return;
     if (fresh.target !== to) {
       log("block", `${label} now points somewhere else`, `was ${to}, now ${fresh.target}`);
@@ -555,10 +583,7 @@ async function reviewPayment({ to, label, amount, source, typedSol }) {
         <div class="sheet-actions"><button class="btn btn-ghost" data-close>Close</button></div>`);
       return;
     }
-    const { value: latest } = await rpc("getLatestBlockhash", [{ commitment: "confirmed" }]);
     message = buildTransferMessage({ from, to, lamports, blockhash: latest.blockhash });
-    const watch = from === to ? [from] : [from, to];
-    const before = await rpc("getMultipleAccounts", [watch, { encoding: "base64", commitment: "confirmed" }]);
     sim = await rpc("simulateTransaction", [toBase64(unsignedWire(message)), {
       encoding: "base64", sigVerify: false, replaceRecentBlockhash: true, commitment: "confirmed",
       accounts: { encoding: "base64", addresses: watch },
@@ -653,7 +678,7 @@ $("settingsBtn").addEventListener("click", () => {
     try { localStorage.setItem("rf3.cap", v); } catch { /* private mode: the default applies */ }
     log("info", "Spend limit saved", `${getCap()} SOL`);
     closeModal();
-    if (state.page) navigate(state.page, { silent: true });
+    redrawForMode();
   });
 });
 

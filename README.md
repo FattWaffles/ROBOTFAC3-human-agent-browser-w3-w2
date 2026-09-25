@@ -19,7 +19,9 @@ Without a key the relay uses the free public endpoint, which rate-limits quickly
 `chains.json` lists the Colosseum World's Fair track chains: Solana plus Ethereum, Base, Arbitrum One, HyperEVM, Tempo and Robinhood Chain. Both `relay.py` and the desktop core read it; the page never sees it.
 - Each EVM upstream must report the expected chain ID before any call goes through. A wrong or spoofed endpoint is refused.
 - Read methods only. No `eth_sendRawTransaction`: the wallet sends, not RobotFac3.
-- Override an endpoint with `<ID>_RPC_URL`, e.g. `BASE_RPC_URL=https://...` (https only).
+- Override an endpoint with `<ID>_RPC_URL`, e.g. `BASE_RPC_URL=https://...` (environment or `.env.local`). Anything that isn't an https URL with a host stops the relay at startup instead of quietly using the public endpoint; the startup line lists which chains are overridden (never the URLs, which may carry a key).
+- Every endpoint is a free public gateway with its own rate limits. Ethereum uses dRPC's public endpoint; `chains.json` records the alternates that also answered on 2026-09-24 in case it goes bad.
+- Both relays refuse upstream redirects, cap an upstream answer at 4 MB, and only hand JSON back to the page. The Python relay also drops a client that goes quiet mid-request after 15 s, allows at most 32 upstream calls in flight (503 beyond that), and throttles upstream calls (per client: 30 then 3/s; everyone together: 50 then 5/s, answered with 429 and `Retry-After`), because on a public host the relay is a door to the RPC key's quota. Static files are cached: images, the word list and the search index for an hour, the page's own files revalidated on every visit.
 - Zcash isn't connected: there's no public JSON-RPC endpoint.
 - Open `rf3://networks` (the Networks tile on the home page) to see every chain's live block.
 
