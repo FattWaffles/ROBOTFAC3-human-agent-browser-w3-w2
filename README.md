@@ -74,7 +74,8 @@ cd src-tauri && cargo tauri build   # RobotFac3.app + .dmg
 ```
 - The UI window may call exactly four Rust commands (`rpc`, `evm_rpc`, `rpc_info`, `open_site`), granted in `capabilities/main.json`. It can't be navigated away from the app.
 - Solana RPC goes through Rust with the same method allow-list as `relay.py`; `HELIUS_API_KEY` is read from the environment and never reaches the page.
-- Websites open in their own real browser windows with no IPC access, so sites that refuse iframes work.
+- Websites open in their own real browser windows with no IPC access, so sites that refuse iframes work. Every site window, and every popup a site opens, is held to plain https for every navigation and redirect after the first, and its title follows the real host (there is no address bar in those windows).
+- The Rust core keeps one HTTPS client for the process (TLS set up once, upstream connections reused); the no-reuse rule belongs to the browser-facing relay, not to upstream calls.
 - `build.rs` embeds only the files `relay.py` is allowed to serve.
 - Not yet: wallet signing. Extensions like Phantom can't run in a desktop webview; signing moves to a companion page in the system browser.
 - Rust dependencies: `tauri`, `serde_json`, `ureq` (rustls). They pull several hundred transitive crates; get security sign-off before the first build.
@@ -127,6 +128,16 @@ Seven reviewers attacked the code, one per risk area (transaction bytes, curve m
 - **Leak check.** Catches the same key in 13 real-world forms (line-wrapped, hex, base64, glued to a label, inside a URL, number lists) with no new false positives on 200 random values; seed phrases with a typo, an "and", numbering or fullwidth letters; pasted text is held until the check finishes.
 
 Judged harmless and left as notes: the spend limit lives in `localStorage` shared by anything served on `localhost:5173`; `allow-popups` on the web frame needs re-checking when this moves into the Tauri webview; balance deltas above 2^53 lamports can be off by a lamport or two in the display (never in the signed bytes).
+
+## Chain-connection review (2026-09-24)
+Four reviewers went over the relay, the Rust core, the chain registry and the browser client; every finding was then attacked by two independent skeptics, one asking whether it reproduces and one whether a fix is worth it under the project's rules. 33 reported, 22 confirmed, 11 refuted. All 22 are fixed. What mattered:
+- **Relay held threads open for idle clients (medium).** No socket timeout, one thread per connection: a half-sent request pinned a thread forever. Fixed with a 15 s deadline; verified 60 stuck clients drop to zero.
+- **Relay had no cap on upstream answers, followed redirects, and had no rate limit (medium ×3).** Fixed: 4 MB cap, redirects refused, token-bucket throttle plus a concurrency cap.
+- **Site windows in the desktop app checked https only once (high).** A redirect could move a site window to http or a `tauri://` address with a stale title. Fixed: the https rule now runs on every navigation, popups get the same rule, titles follow the page.
+- **Popups inside site windows were silently dropped (medium).** `window.open` and `target=_blank` now open a guarded site window.
+- **Ethereum's only endpoint passed the chain-ID check but refused reads (medium).** Switched to dRPC; alternates recorded.
+- Smaller ones: the Rust core's upstream read now errors instead of returning an empty 200; error messages name the right chain; a bad `<ID>_RPC_URL` fails loudly; malformed block, slot and balance answers paint red instead of green or crashing the page; the You/Agent toggle no longer re-queries the chain; the payment review makes its three independent reads at once; stale files are pruned from the desktop bundle; the 1.6 MB logo is now 32 KB.
+- Refuted (left alone): periodic re-verification of chain IDs, per-URL fallback machinery in both relays, retries on 429, a slot floor on re-resolution, and reporting the relay's own error bodies differently. Each was judged either not reproducible or not worth its weight before the deadline.
 
 ## Not verified
 - **Names held as NFTs.** Finding the holder needs `getTokenLargestAccounts`, which the free public RPC always answers with HTTP 429. The code path exists and fails closed; it has not been checked against the reference. Needs a Helius key.
