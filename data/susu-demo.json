@@ -1,0 +1,79 @@
+{
+  "v": 1,
+  "mock": true,
+  "id": "family-circle",
+  "name": "Family Circle",
+  "chain": "solana",
+  "token": "USDC",
+  "amount": "50",
+  "cadence": "monthly",
+  "seats": 4,
+  "start": "2026-09-14",
+  "order": "fixed",
+  "collateralRounds": 1,
+  "graceHours": 48,
+  "status": "active",
+  "today": "2026-10-13",
+  "organizer": "amara",
+  "members": [
+    { "id": "amara", "name": "amara.sns", "slot": 1, "status": "joined", "wallet": "mock member", "joinedOn": "2026-09-08", "usdc": "310", "feeSol": "0.02", "collateral": "50", "allowance": { "state": "none", "agent": "" } },
+    { "id": "you", "name": "nia.sns", "slot": 2, "status": "joined", "wallet": "mock member", "joinedOn": "2026-09-09", "usdc": "120", "feeSol": "0.01", "collateral": "50", "allowance": { "state": "active", "agent": "Scout" } },
+    { "id": "kofi", "name": "kofi.sns", "slot": 3, "status": "joined", "wallet": "mock member", "joinedOn": "2026-09-10", "usdc": "130", "feeSol": "0.02", "collateral": "50", "allowance": { "state": "active", "agent": "Hermes" } },
+    { "id": "dana", "name": "dana.sns", "slot": 4, "status": "joined", "wallet": "mock member", "joinedOn": "2026-09-11", "usdc": "50", "feeSol": "0", "collateral": "0", "allowance": { "state": "none", "agent": "" } }
+  ],
+  "rounds": [
+    {
+      "n": 1, "due": "2026-09-14", "recipient": "amara", "state": "settled",
+      "payments": [
+        { "member": "amara", "by": "hand", "day": "2026-09-12", "amount": "50" },
+        { "member": "you", "by": "agent", "day": "2026-09-14", "amount": "50" },
+        { "member": "kofi", "by": "agent", "day": "2026-09-14", "amount": "50" },
+        { "member": "dana", "by": "collateral", "day": "2026-09-17", "amount": "50" }
+      ],
+      "answers": [{ "member": "you", "answer": "ok", "day": "2026-09-13" }],
+      "pot": { "state": "paid", "amount": "200", "since": "2026-09-17", "paidOn": "2026-09-17" }
+    },
+    {
+      "n": 2, "due": "2026-10-14", "recipient": "you", "state": "open",
+      "payments": [
+        { "member": "amara", "by": "hand", "day": "2026-10-10", "amount": "50" },
+        { "member": "kofi", "by": "agent", "day": "2026-10-13", "amount": "50" }
+      ],
+      "answers": [{ "member": "kofi", "answer": "ok", "day": "2026-10-13" }],
+      "pot": { "state": "none", "amount": "0", "since": "", "paidOn": "" }
+    },
+    { "n": 3, "due": "2026-11-14", "recipient": "kofi", "state": "scheduled", "payments": [], "answers": [], "pot": { "state": "none", "amount": "0", "since": "", "paidOn": "" } },
+    { "n": 4, "due": "2026-12-14", "recipient": "dana", "state": "scheduled", "payments": [], "answers": [], "pot": { "state": "none", "amount": "0", "since": "", "paidOn": "" } }
+  ],
+  "script": [
+    { "day": "2026-10-14", "member": "dana", "action": "top-up" },
+    { "day": "2026-11-10", "member": "amara", "action": "pay" },
+    { "day": "2026-12-10", "member": "amara", "action": "pay" }
+  ],
+  "history": [
+    { "day": "2026-09-07", "actor": "amara.sns", "kind": "create", "text": "Created Family Circle: 50 USDC every month, 4 seats, fixed order. The organizer has no power after this.", "member": "amara" },
+    { "day": "2026-09-08", "actor": "amara.sns", "kind": "join", "text": "Joined Family Circle at slot 1 of 4. Posted 50 USDC of collateral. The pot goes to the wallet that joined.", "member": "amara" },
+    { "day": "2026-09-09", "actor": "YOU", "kind": "join", "text": "Joined Family Circle at slot 2 of 4. Posted 50 USDC of collateral. The pot goes to the wallet that joined.", "member": "you" },
+    { "day": "2026-09-09", "actor": "YOU", "kind": "allowance-set", "text": "Set the agent allowance. The circle program may pull 50 USDC per round into Family Circle's vault.", "member": "you" },
+    { "day": "2026-09-10", "actor": "kofi.sns", "kind": "join", "text": "Joined Family Circle at slot 3 of 4. Posted 50 USDC of collateral. The pot goes to the wallet that joined.", "member": "kofi" },
+    { "day": "2026-09-10", "actor": "kofi.sns", "kind": "allowance-set", "text": "Set the agent allowance. The circle program may pull 50 USDC per round into Family Circle's vault.", "member": "kofi" },
+    { "day": "2026-09-11", "actor": "dana.sns", "kind": "join", "text": "Joined Family Circle at slot 4 of 4. Posted 50 USDC of collateral. The pot goes to the wallet that joined.", "member": "dana" },
+    { "day": "2026-09-11", "actor": "PROGRAM", "kind": "open", "text": "All 4 seats joined. Terms are locked. Round 1 opened. 50 USDC is due Sep 14.", "member": "" },
+    { "day": "2026-09-12", "actor": "amara.sns", "kind": "pay", "text": "Paid 50 USDC by hand for round 1 of 4.", "member": "amara" },
+    { "day": "2026-09-13", "actor": "SCOUT", "kind": "notice", "text": "Notice to nia.sns: the agent will pay 50 USDC to Family Circle on Sep 14.", "member": "you" },
+    { "day": "2026-09-13", "actor": "HERMES", "kind": "notice", "text": "Notice to kofi.sns: the agent will pay 50 USDC to Family Circle on Sep 14.", "member": "kofi" },
+    { "day": "2026-09-13", "actor": "YOU", "kind": "ok", "text": "Said OK. The agent pays 50 USDC to Family Circle on Sep 14.", "member": "you" },
+    { "day": "2026-09-14", "actor": "SCOUT", "kind": "pay", "text": "Paid 50 USDC to Family Circle for round 1 of 4 under nia.sns's allowance.", "member": "you" },
+    { "day": "2026-09-14", "actor": "HERMES", "kind": "pay", "text": "Paid 50 USDC to Family Circle for round 1 of 4 under kofi.sns's allowance.", "member": "kofi" },
+    { "day": "2026-09-15", "actor": "PROGRAM", "kind": "late", "text": "dana.sns is late for round 1. 48 hours of grace end on Sep 16.", "member": "dana" },
+    { "day": "2026-09-17", "actor": "PROGRAM", "kind": "draw", "text": "Drew 50 USDC from dana.sns's collateral for round 1. The pot is paid in full. dana.sns tops up 50 USDC before round 2 or leaves.", "member": "dana" },
+    { "day": "2026-09-17", "actor": "PROGRAM", "kind": "pot", "text": "Round 1 pot of 200 USDC is ready for amara.sns. It goes to the wallet fixed at join.", "member": "amara" },
+    { "day": "2026-09-17", "actor": "PROGRAM", "kind": "open", "text": "Round 2 of 4 opened. 50 USDC is due Oct 14.", "member": "" },
+    { "day": "2026-09-17", "actor": "amara.sns", "kind": "claim", "text": "Claimed the round 1 pot: 200 USDC to the wallet fixed at join.", "member": "amara" },
+    { "day": "2026-10-10", "actor": "amara.sns", "kind": "pay", "text": "Paid 50 USDC by hand for round 2 of 4.", "member": "amara" },
+    { "day": "2026-10-13", "actor": "SCOUT", "kind": "notice", "text": "Notice to nia.sns: the agent will pay 50 USDC to Family Circle on Oct 14.", "member": "you" },
+    { "day": "2026-10-13", "actor": "HERMES", "kind": "notice", "text": "Notice to kofi.sns: the agent will pay 50 USDC to Family Circle on Oct 14.", "member": "kofi" },
+    { "day": "2026-10-13", "actor": "kofi.sns", "kind": "ok", "text": "Said OK. The agent pays 50 USDC to Family Circle on Oct 14.", "member": "kofi" },
+    { "day": "2026-10-13", "actor": "HERMES", "kind": "pay", "text": "Paid 50 USDC to Family Circle for round 2 of 4 under kofi.sns's allowance.", "member": "kofi" }
+  ]
+}
