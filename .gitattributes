@@ -1,0 +1,11 @@
+# Line endings: LF in the repository and in every checkout, on every platform.
+# Git for Windows defaults to CRLF checkouts. That would change the bytes of src/vendor/bip39-english.txt
+# (a test pins its SHA-256) and of every file build.rs embeds in the desktop app.
+* text=auto eol=lf
+
+# Never rewrite bytes of images or archives.
+*.png binary
+*.ico binary
+*.icns binary
+*.jpg binary
+*.zip binary

@@ -16,9 +16,18 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
-    "icon": ["icons/icon.png"],
+    "targets": "all",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
     "category": "Productivity",
-    "shortDescription": "A browser for Web2, Web3 and AI agents, with security as the shared foundation."
+    "shortDescription": "A browser for Web2, Web3 and AI agents, with security as the shared foundation.",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      },
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      }
+    }
   }
 }
