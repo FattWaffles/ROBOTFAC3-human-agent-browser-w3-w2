@@ -6,6 +6,7 @@
     <meta name="referrer" content="no-referrer" />
     <link rel="icon" href="public/icon.png" />
     <title>RobotFac3</title>
+    <script src="src/theme.js"></script>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -16,44 +17,83 @@
           <button type="button" class="site-link" data-nav="rf3://search">Search</button>
           <a href="https://github.com/FattWaffles/ROBOTFAC3-human-agent-browser-w3-w2" target="_blank" rel="noopener noreferrer">GitHub</a>
           <a href="mailto:hello@robotfac3.com" title="Email the team">Contact</a>
-          <a id="downloadBtn" class="btn btn-red btn-small" href="https://github.com/FattWaffles/ROBOTFAC3-human-agent-browser-w3-w2/releases/latest" target="_blank" rel="noopener noreferrer"
+          <a id="downloadBtn" class="btn btn-primary btn-small" href="https://github.com/FattWaffles/ROBOTFAC3-human-agent-browser-w3-w2/releases/latest" target="_blank" rel="noopener noreferrer"
             title="Desktop builds will be posted on the GitHub releases page">Download desktop app</a>
           <span class="chip chip-warn" title="No desktop build exists yet">soon</span>
         </div>
       </nav>
       <header class="chrome">
-        <div class="chrome-top">
-          <img src="public/logo.png" alt="RobotFac3" class="logo" />
+        <div class="tab-strip">
+          <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
+          <div class="tab">
+            <img src="public/avatars/scout.svg" alt="" class="tab-mark" />
+            <span id="tabTitle" class="tab-title">RobotFac3</span>
+            <button type="button" class="tab-btn" data-nav="rf3://home" title="Close this page and go home" aria-label="Close this page and go home" data-icon="close" data-size="14"></button>
+          </div>
+          <button type="button" id="homeBtn" class="tab-btn tab-new" title="New tab: home" aria-label="New tab: home" data-icon="plus"></button>
+          <span id="upstream" class="chip chip-muted tab-meta" title="Where the relay sends Solana requests">rpc: …</span>
+        </div>
+        <div class="toolbar">
+          <button type="button" id="backBtn" class="tool-btn" title="Back" aria-label="Back" data-icon="arrow-left" disabled></button>
+          <button type="button" id="fwdBtn" class="tool-btn" title="Forward" aria-label="Forward" data-icon="arrow-right" disabled></button>
+          <button type="button" id="reloadBtn" class="tool-btn" title="Reload" aria-label="Reload" data-icon="refresh"></button>
+          <form id="addressForm" class="address-form">
+            <div class="address-box">
+              <span class="address-lock" data-icon="lock" data-size="16" aria-hidden="true"></span>
+              <span id="protoBadge" class="chip chip-muted" hidden>—</span>
+              <input id="address" autocomplete="off" autocapitalize="off" spellcheck="false"
+                placeholder="Search or enter address…" aria-label="Search or enter address" />
+              <span class="chip chip-ok">shield on</span>
+              <button class="tool-btn tool-btn-small" title="Go" aria-label="Go" data-icon="arrow-right" data-size="16"></button>
+            </div>
+          </form>
           <div class="mode-switch">
             <button data-mode="human" class="mode-btn">You</button>
             <button data-mode="agent" class="mode-btn">Agent</button>
           </div>
-          <div class="chrome-actions">
-            <span id="upstream" class="chip chip-muted" title="Where the relay sends Solana requests">rpc: …</span>
-            <button id="settingsBtn" class="btn btn-ghost">Settings</button>
-            <button id="walletBtn" class="btn btn-red">Connect Phantom</button>
+          <div id="agentChip" class="ag-chip" hidden>
+            <button type="button" id="agentChipOpen" class="ag-chip-main">
+              <span id="agentChipDot" class="dot"></span>
+              <b id="agentChipName"></b>
+              <span id="agentChipDemo" class="ag-chip-demo" hidden>scripted demo</span>
+              <span id="agentChipState" class="ag-chip-state"></span>
+              <progress id="agentChipMeter" class="ag-meter" max="100" value="0" aria-label="Session spend"></progress>
+              <span id="agentChipSpend" class="ag-chip-spend"></span>
+              <span id="agentChipNeeds" class="count count-alert" title="Waiting on you" hidden></span>
+            </button>
+            <button type="button" id="agentChipMore" class="tool-btn tool-btn-small" title="Pause, stop or revoke" aria-label="Pause, stop or revoke" data-icon="more" data-size="16"></button>
           </div>
+          <button id="walletBtn" class="btn btn-primary">Connect Phantom</button>
+          <span class="tool-rule" aria-hidden="true"></span>
+          <button type="button" id="panelBtn" class="tool-btn tool-btn-boxed" title="Agents and security log" aria-label="Agents and security log" aria-pressed="true"><span aria-hidden="true">🤖</span></button>
+          <button type="button" id="themeBtn" class="tool-btn"></button>
+          <button id="settingsBtn" class="tool-btn" title="Settings" aria-label="Settings" data-icon="more-vertical"></button>
         </div>
-        <form id="addressForm" class="address-row">
-          <button type="button" id="homeBtn" class="btn btn-ghost btn-icon" title="Home">⌂</button>
-          <div class="address-box">
-            <span id="protoBadge" class="chip chip-muted">—</span>
-            <input id="address" autocomplete="off" autocapitalize="off" spellcheck="false"
-              placeholder="toly.sns · solana.com · or search Web3 projects on any chain" />
-            <span class="chip chip-ok">shield on</span>
-          </div>
-          <button class="btn btn-red">Go</button>
-        </form>
       </header>
 
-      <div class="body">
+      <div id="body" class="body">
         <main id="view" class="view"></main>
-        <aside class="sidebar">
+        <aside class="sidebar" aria-label="Agents and security log">
           <div class="sidebar-head">
-            <h2>Security core</h2>
-            <span class="chip chip-red">live</span>
+            <div class="side-tabs" role="tablist">
+              <button type="button" class="side-tab on" role="tab" aria-selected="true" data-side="agents">Agents</button>
+              <button type="button" class="side-tab" role="tab" aria-selected="false" data-side="log" title="Security core log"><span role="img" aria-label="Security core">🛡️</span> Security<span id="logCount" class="count" hidden></span></button>
+            </div>
+            <span id="onlineCount" class="online">0 online</span>
+            <button type="button" id="addAgentBtn" class="icon-btn" title="Connect an agent" aria-label="Connect an agent" data-icon="plus"></button>
+            <button type="button" id="logOnly" class="chip chip-muted ag-filter" title="Show only this agent's rows" hidden></button>
+            <span id="liveChip" class="chip chip-ok" hidden>live</span>
           </div>
-          <div id="log" class="log"></div>
+          <section id="agentsPanel" class="agents">
+            <div id="roster" class="roster"></div>
+            <form id="promptForm" class="prompt">
+              <span class="agent-avatar" role="img" aria-label="Scout" title="Scout, the scripted demo agent">🤖</span>
+              <input id="promptTask" autocomplete="off" autocapitalize="off" spellcheck="false"
+                placeholder="Ask Scout. Try: Send 0.001 SOL to toly.sns" aria-label="Task for Scout" />
+              <button class="icon-btn icon-btn-send" title="Send to Scout" aria-label="Send to Scout" data-icon="send"></button>
+            </form>
+          </section>
+          <div id="log" class="log" hidden></div>
         </aside>
       </div>
     </div>
